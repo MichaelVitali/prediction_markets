@@ -6,7 +6,7 @@ using LinearAlgebra
 using DataFrames
 using LossFunctions
 
-export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_averaging_dists, quantile_averaging_dataframes
+export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_averaging_dists, quantile_averaging_dataframes, quantile_loss_gradient
 
     function quantile_averaging_dists(dists, quantiles, weights)
 
@@ -73,13 +73,20 @@ export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_a
     
     end
 
-    
-
     function get_avg_distribution(avg_quantiles::Array, dist::Distribution=Normal)
 
         avg_dist = fit(dist, avg_quantiles)
         return avg_dist
 
+    end
+
+    function quantile_loss_gradient(y_true, y_hat, q)
+
+        if y_true >= y_hat
+            return -q
+        else
+            return (1-q)
+        end
     end
 
 end
