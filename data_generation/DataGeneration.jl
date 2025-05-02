@@ -1,56 +1,11 @@
 module DataGeneration
 using Statistics
 using Distributions
+using LinearAlgebra
 
-export generate_time_invariant_data, generate_time_variant_data, data_generation, create_forecasters_preds
+export data_generation_case_study_abrupt, data_generation_case_study_invariant, generate_time_invariant_data, data_generation_case_study_dynamic, generate_abrupt_data, generate_dynamic_data
 
-    function generate_time_invariant_data(n_samples::Int, coefs::Vector{Float64})
-        n_forecasters = length(coefs)
-        
-        # Generate base variables
-        X0 = randn(n_samples)
-        X_private = [randn(n_samples) for _ in 1:n_forecasters]
-        eps = randn(n_samples)
-        
-        Y = X0 .+ eps
-        for (i, c) in enumerate(coefs)
-            Y .+= (c .* X_private[i])
-        end
-        
-        # Package distributions in Dict
-        distributions = Dict("X0" => X0)
-        for i in 1:n_forecasters
-            distributions["X$i"] = X_private[i]
-        end
-        
-        return Y, distributions
-    end
-
-    function generate_time_variant_data(
-        T::Integer=1000,
-        mu0::Float64=1.0,
-        std::Float64=1.0,
-    )
-
-        Y_T = Array{Float64}(undef, T)
-        eps = randn(T)
-
-        # t = 0
-        mean_0 = 0.15 * asin(mu0)
-        Y_T[1] = rand(Normal(mean_0, std))
-
-        mu_t = mu0
-        for t in range(2, T)
-            mu_t = 0.99 * mu_t + eps[t]
-            mean_t = 0.15 * asinh(mu_t)
-            Y_T[t] = rand(Normal(mean_t, std))
-        end
-
-        return Y_T
-
-    end
-
-    function data_generation(case_study, T, q)
+    function data_generation_case_study_invariant(case_study, T, q)
 
         if case_study == "Gneiting"
             X0 = randn(T)
@@ -59,8 +14,8 @@ export generate_time_invariant_data, generate_time_variant_data, data_generation
             X3 = randn(T)
             e = randn(T)
     
-            a1 = 1
-            a2 = 1
+            a1 = 1.0
+            a2 = 1.0
             a3 = 1.1
     
             Y = X0 .+ (a1 .* X1) .+ (a2 .* X2) .+ (a3 .* X3) .+ e
@@ -77,45 +32,249 @@ export generate_time_invariant_data, generate_time_variant_data, data_generation
                 "f2" => quantile.(Normal.(MU2, sd2), q),
                 "f3" => quantile.(Normal.(MU3, sd3), q),
             ])
+
         elseif case_study == "Berrisch"
             mu = 0
             Y = zeros(T)
     
             for t in 1:T
                 mu = 0.99 * mu + randn(1)[1]
-                Y[t] = quantile(Normal((0.15*asinh(mu)),1), q)
+                Y[t] = rand(Normal((0.15*asinh(mu)),1))
             end
     
             forecasters = Dict([
                 "f1" => [quantile(Normal(-1, 1), q) for t in 1:T],
                 "f2" => [quantile(Normal(3, 2), q) for t in 1:T]
             ])
+
         end
     
         return Y, forecasters
     end
 
-    function create_forecasters_preds(
-        distributions,
-        q,
-        coefs::Vector{Float64},
-    )
+    function data_generation_case_study_abrupt(case_study, T, q)
+
+        if case_study == "Gneiting"
+            X0 = randn(T)
+            X1 = randn(T)
+            X2 = randn(T)
+            X3 = randn(T)
+            e = randn(T)
+            Y = zeros(T)
+            f1 = zeros(T)
+            f2 = zeros(T)
+            f3 = zeros(T)
+
+            for t in 1:T
+
+                if t < (T/2)
+                    a1 = 1
+                    a2 = 1
+                    a3 = 1.1
+                else
+                    a1 = 1.5
+                    a2 = 1.1
+                    a3 = 1
+                end
+
+                Y[t] = X0[t] + (a1 * X1[t]) + (a2 * X2[t]) + (a3 * X3[t]) + e[t]
+
+                MU1 = X0[t] .+ a1.*X1[t]
+                MU2 = X0[t] .+ a2.*X2[t]
+                MU3 = X0[t] .+ a3.*X3[t]
+                sd1 = (1+a2^2+a3^2)^0.5
+                sd2 = (1+a1^2+a3^2)^0.5
+                sd3 = (1+a1^2+a2^2)^0.5
+
+                f1[t] = quantile(Normal(MU1, sd1), q)
+                f2[t] = quantile(Normal(MU2, sd2), q)
+                f3[t] = quantile(Normal(MU3, sd3), q)
+            end
     
-        forecasters_dict = Dict()
-    
-        for (i, coef) in enumerate(coefs)
-            forecaster_name = "f" * string(i)
-    
-            other_coefs = vcat(coefs[1:i-1], coefs[i+1:end])
-            forecaster_mean = distributions["X0"] .+ (coef .* distributions["X$i"])
-            forecaster_var = 1 + sum(other_coefs.^2)
-    
-            forecaster_dists = Normal.(forecaster_mean, sqrt(forecaster_var))
-            forecasters_dict[forecaster_name] = quantile.(forecaster_dists, q)
+            forecasters = Dict([
+                "f1" => f1,
+                "f2" => f2,
+                "f3" => f3,
+            ])
         end
+
+        return Y, forecasters
+    end
+
+    function data_generation_case_study_dynamic(case_study, T, q)
+
+        if case_study == "Gneiting"
+            X0 = randn(T)
+            X1 = randn(T)
+            X2 = randn(T)
+            X3 = randn(T)
+            e = randn(T)
+            Y = zeros(T)
+            f1 = zeros(T)
+            f2 = zeros(T)
+            f3 = zeros(T)
+
+            a1 = 1
+            a2 = 1
+            a3 = 1.1
+            lambda = 0.9999
+
+            for t in 1:T
+
+                Y[t] = X0[t] + (a1 * X1[t]) + (a2 * X2[t]) + (a3 * X3[t]) + e[t]
+
+                MU1 = X0[t] .+ a1.*X1[t]
+                MU2 = X0[t] .+ a2.*X2[t]
+                MU3 = X0[t] .+ a3.*X3[t]
+                sd1 = (1+a2^2+a3^2)^0.5
+                sd2 = (1+a1^2+a3^2)^0.5
+                sd3 = (1+a1^2+a2^2)^0.5
+
+                f1[t] = quantile(Normal(MU1, sd1), q)
+                f2[t] = quantile(Normal(MU2, sd2), q)
+                f3[t] = quantile(Normal(MU3, sd3), q)
+
+                if t < T/4 || (t >= T/2 && t < 3/4*T)
+                    a1 = lambda * a1 + (1-lambda) * 1.5
+                    a2 = lambda * a2 + (1-lambda) * 1.1
+                    a3 = lambda * a3 + (1-lambda) * 1.2
+                elseif t >= T/4 && t < T/2 || (t >= 3/4*T)
+                    a1 = lambda * a1 + (1-lambda) * 1
+                    a2 = lambda * a2 + (1-lambda) * 1
+                    a3 = lambda * a3 + (1-lambda) * 1.1
+                end
+            end
     
-        return forecasters_dict
-    
+            forecasters = Dict([
+                "f1" => f1,
+                "f2" => f2,
+                "f3" => f3,
+            ])
+        end
+
+        return Y, forecasters
+    end
+
+    function generate_time_invariant_data(T, q)
+
+        mu1 = zeros(T).+ randn(T).*0.5
+        mu2 = fill(1, T).+ randn(T).*0.5
+        mu3 = fill(2, T).+ randn(T).*0.5
+        sig1 = 1
+        sig2 = 1
+        sig3 = 1
+        w = [0.1, 0.6, 0.3]
+
+        F1 = Normal.(mu1, sig1)
+        F2 = Normal.(mu2, sig2)
+        F3 = Normal.(mu3, sig3)
+
+        mu_y = mu1 .* w[1] .+ mu2 .* w[2] .+ mu3 .* w[3]
+        sig_y = w[1] * sig1 + w[2] * sig2 + w[3] * sig3
+        Y = Normal.(mu_y, sig_y)
+
+        f1 = quantile.(F1, q)
+        f2 = quantile.(F2, q)
+        f3 = quantile.(F3, q)
+
+        forecasters_dict = Dict("f1" => f1, "f2" => f2, "f3" => f3)
+        true_values = rand.(Y)
+
+        true_weights = repeat(w', T)
+            
+        return true_values, forecasters_dict, true_weights
+    end
+
+    function generate_abrupt_data(T, q)
+
+        mu1 = zeros(T) .+ randn(T).*0.5
+        mu2 = fill(1, T) .+ randn(T).*0.5
+        mu3 = fill(2, T) .+ randn(T).*0.5
+        sig1 = 1
+        sig2 = 1
+        sig3 = 1
+
+        F1 = Normal.(mu1, sig1)
+        F2 = Normal.(mu2, sig2)
+        F3 = Normal.(mu3, sig3)
+
+        true_values = zeros(T)
+        w1 = [0.1, 0.6, 0.3]
+        w2 = [0.4, 0.2, 0.4]
+
+        for t in 1:T
+            if t < T/2
+                w = w1
+            else
+                w = w2
+            end
+            
+            mu_y = mu1[t] .* w[1] .+ mu2[t] .* w[2] .+ mu3[t] .* w[3]
+            sig_y = w[1] * sig1 + w[2] * sig2 + w[3] * sig3
+            Y = Normal(mu_y, sig_y)
+            true_values[t] = rand(Y)
+        end
+
+        f1 = quantile.(F1, q)
+        f2 = quantile.(F2, q)
+        f3 = quantile.(F3, q)
+
+        forecasters_dict = Dict("f1" => f1, "f2" => f2, "f3" => f3)
+
+        true_weights = Matrix{Float16}(undef, T, 3)
+        true_weights[1:map(Int, T/2), :] .= w1'
+        true_weights[map(Int, T/2)+1:end, :] .= w2'
+            
+        return true_values, forecasters_dict, true_weights
+    end
+
+    function generate_dynamic_data(T, q)
+
+        mu1 = zeros(T) .+ randn(T).*0.5
+        mu2 = fill(1, T) .+ randn(T).*0.5
+        mu3 = fill(2, T) .+ randn(T).*0.5
+        sig1 = 1
+        sig2 = 1
+        sig3 = 1
+
+        F1 = Normal.(mu1, sig1)
+        F2 = Normal.(mu2, sig2)
+        F3 = Normal.(mu3, sig3)
+
+        true_values = zeros(T)
+        true_weights = Matrix{Float16}(undef, T, 3)
+        w1 = [0.1, 0.6, 0.3]
+        w2 = [0.4, 0.2, 0.4]
+        lambda = 0.999
+        w = [0.4, 0.2, 0.4]
+
+        for t in 1:T
+
+            if t < T/4 || (t >= T/2 && t < 3/4*T)
+                w[1] = lambda * w[1] + (1-lambda) * w1[1]
+                w[2] = lambda * w[2] + (1-lambda) * w1[2]
+                w[3] = lambda * w[3] + (1-lambda) * w1[3]
+            else
+                w[1] = lambda * w[1] + (1-lambda) * w2[1]
+                w[2] = lambda * w[2] + (1-lambda) * w2[2]
+                w[3] = lambda * w[3] + (1-lambda) * w2[3]
+            end
+            
+            mu_y = mu1[t] .* w[1] .+ mu2[t] .* w[2] .+ mu3[t] .* w[3]
+            sig_y = w[1] * sig1 + w[2] * sig2 + w[3] * sig3
+            Y = Normal(mu_y, sig_y)
+            true_values[t] = rand(Y)
+
+            true_weights[t, :] = w
+        end
+
+        f1 = quantile.(F1, q)
+        f2 = quantile.(F2, q)
+        f3 = quantile.(F3, q)
+
+        forecasters_dict = Dict("f1" => f1, "f2" => f2, "f3" => f3)
+            
+        return true_values, forecasters_dict, true_weights
     end
 
 end
