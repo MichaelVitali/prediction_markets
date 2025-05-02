@@ -6,7 +6,7 @@ using LinearAlgebra
 using DataFrames
 using LossFunctions
 
-export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_averaging_dists, quantile_averaging_dataframes, quantile_loss_gradient
+export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_averaging_dists, quantile_averaging_dataframes, quantile_loss_gradient, initialize_weights, optimal_weights, constrained_OLS, calculate_quantile_loss_dataframe
 
     function quantile_averaging_dists(dists, quantiles, weights)
 
@@ -81,12 +81,42 @@ export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_a
     end
 
     function quantile_loss_gradient(y_true, y_hat, q)
-
-        if y_true >= y_hat
-            return -q
+        if y_hat > y_true
+            return (1 - q)
         else
-            return (1-q)
+            return -q
         end
+    end
+
+    function initialize_weights(n_experts::Integer)
+
+        weigths = fill(1 / n_experts, n_experts)
+    
+        return weigths
+    
+    end
+
+    function optimal_weights(forecaster_preds, y_true)
+
+        X = hcat([(y_true .- forecaster_preds[f]) for f in keys(forecaster_preds)]...)
+        covariance_matrix = cov(X)
+        id = ones(size(X, 2))
+        optimal_weights = (covariance_matrix \ id) / (id' * (covariance_matrix \  id))
+
+        return optimal_weights
+
+    end
+
+    function constrained_OLS(forecaster_preds, y_true)
+
+        F = hcat([forecaster_preds[f] for f in keys(forecaster_preds)]...)
+        l = ones(length(keys(forecaster_preds)))
+        alpha = (transpose(F) * F) \ transpose(F) * y_true
+        lambda = (l' * alpha .- 1) ./ (l' * ((transpose(F) * F) \ l))
+        
+        optimal_w = alpha .- (lambda * ((transpose(F) * F) \ l))
+        return optimal_w
+
     end
 
 end
