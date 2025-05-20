@@ -7,19 +7,21 @@ include("data_generation/DataGeneration.jl")
 include("online_algorithms/BOA.jl")
 include("online_algorithms/squint.jl")
 include("online_algorithms/ML_poly.jl")
+include("online_algorithms/quantile_regression.jl")
 using .UtilsFunctions
 using .DataGeneration
 using .BOA
 using .Squint
 using .ML_Poly
+using .QuantileRegression
 
 
 n_experiments = 100
-T = 100000
+T = 100000 
 q = 0.5
 n_forecasters = 3
 case_study = "Gneiting"
-algorithms = ["BOA", "Squint", "ML_Poly"]
+algorithms = ["BOA", "Squint", "ML_Poly", "QR"]
 
 exp_weights = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
 true_weights = nothing
@@ -27,7 +29,7 @@ true_weights = nothing
 for i in 1:n_experiments
     forecaster_weight = initialize_weights(n_forecasters)
     
-    invariant_data, forecasters_preds, true_weights = generate_abrupt_data(T, q)
+    invariant_data, forecasters_preds, true_weights = generate_dynamic_data(T, q)
     global true_weights = true_weights
     sorted_f = sort(collect(forecasters_preds), by=first)
     sorted_forecasters = OrderedDict(sorted_f)
@@ -39,6 +41,8 @@ for i in 1:n_experiments
             weights_history = squint_CP(sorted_forecasters, invariant_data, T, q)
         elseif algo == "ML_Poly"
             weights_history = ml_poly(sorted_forecasters, invariant_data, T, q)
+        elseif algo == "QR"
+            weights_history = online_quantile_regression(sorted_forecasters, forecaster_weight, invariant_data, T, q)
         end
         exp_weights[algo] .+= weights_history
     end
