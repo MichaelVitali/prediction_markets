@@ -7,7 +7,7 @@ module QuantileRegression
     using .UtilsFunctions
     using .DataGeneration
 
-export online_quantile_regression
+export online_quantile_regression, online_quantile_regression_update
 
     function online_quantile_regression(forecasters_preds, forecaster_weights, y_true, T, q)
 
@@ -26,5 +26,17 @@ export online_quantile_regression
             end
 
             return weights_history
+    end
+
+    function online_quantile_regression_update(forecasters_preds, prev_forecaster_weights, y_true, q, learning_rate=0.01)
+
+        agg_quantile_t = sum(forecasters_preds .* prev_forecaster_weights)
+        lks = quantile_loss_gradient(y_true, agg_quantile_t, q) .* forecasters_preds
+
+        new_weights = prev_forecaster_weights .- learning_rate .* lks
+        new_weights = project_to_simplex(new_weights)
+
+        return new_weights
+
     end
 end

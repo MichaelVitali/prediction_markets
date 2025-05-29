@@ -5,7 +5,7 @@ module BOA
     include("../functions/functions.jl")
     using .UtilsFunctions
 
-export bernstein_online_aggregation
+export bernstein_online_aggregation, bernstein_online_aggregation_update
 
     function bernstein_online_aggregation(forecasters_preds, forecaster_weights, y_true, T, q)
 
@@ -26,6 +26,17 @@ export bernstein_online_aggregation
         end
 
         return weights_history
+    end
+
+    function bernstein_online_aggregation_update(forecasters_preds, prev_forecaster_weights, y_true, q, learning_rate=0.01)
+
+        agg_quantile_t = sum(forecasters_preds .* prev_forecaster_weights)
+        lks = quantile_loss_gradient(y_true, agg_quantile_t, q) .* (forecasters_preds .- agg_quantile_t)
+
+        numerators = prev_forecaster_weights .* exp.(-learning_rate .* lks .* (1 .- (learning_rate .* lks)))
+        new_weights = numerators ./ sum(numerators)
+
+        return new_weights
     end
 
 end
