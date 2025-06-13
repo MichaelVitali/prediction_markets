@@ -19,7 +19,7 @@ export online_adaptive_robust_quantile_regression
         new_w = project_to_simplex(new_w)
         new_D = prev_D - learning_rate .* gradient_D
 
-        return new_w, new_D
+        return new_w, new_D, agg_quantile_t
 
     end
 
