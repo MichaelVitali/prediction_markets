@@ -2,6 +2,7 @@ using LinearAlgebra
 using Plots
 using DataStructures
 using Statistics
+using ProgressBars
 
 include("functions/functions.jl")
 include("functions/metrics.jl")
@@ -18,7 +19,7 @@ using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
 n_experiments = 100
-T = 20000
+T = 10000
 q = 0.5
 n_forecasters = 3
 algorithms = ["RQR"]
@@ -27,32 +28,35 @@ show_benchmarks = true
 if show_benchmarks
     push!(algorithms, "mean_impute")
     push!(algorithms, "last_impute")
-    #push!(algorithms, "oracle")
 end
-exp_weights = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
-exp_forecasts = Dict([algo => zeros(T) for algo in algorithms])
-exp_realizations = zeros(T)
+
+exp_weights = Dict([algo => Dict([f => zeros(n_experiments, T) for f in 1:n_forecasters]) for algo in algorithms])
+exp_forecasts = Dict([algo => zeros(n_experiments, T) for algo in algorithms])
+exp_realizations = zeros(n_experiments, T)
 true_weights = nothing
 
-for i in 1:n_experiments
+
+for i in ProgressBar(1:n_experiments)
 
     # Weights initialization
     weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
     forecasts_history = Dict([algo => zeros((T)) for algo in algorithms])
     for algo in algorithms
         weights_history[algo][:, 1] .= initialize_weights(n_forecasters)
-        exp_weights[algo][:, 1] .+= initialize_weights(n_forecasters)
     end
     
     # Data generation
-    realizations, forecasters_preds, true_weights = generate_time_invariant_data(T, q)
-    global true_weights = true_weights'
-    global exp_realizations += realizations
+    realizations, forecasters_preds, w = generate_time_invariant_data(T, q)
+    global exp_realizations[i, :] .= realizations
     sorted_f = sort(collect(forecasters_preds), by=first)
     sorted_forecasters = OrderedDict(sorted_f)
 
+    if i == 1
+        global true_weights = w'
+    end
+
     if "RQR" in algorithms
-        alpha = Int.(rand(n_forecasters, T) .< 0.1)
+        alpha = Int.(rand(n_forecasters, T) .< 0.05)
         D_exp = zeros(n_forecasters, n_forecasters)
     end
 
@@ -64,12 +68,15 @@ for i in 1:n_experiments
         for algo in algorithms
             if algo == "QR"
                 weights_history[algo][:, t] = online_quantile_regression_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q)
-                exp_weights[algo][:, t] .+= weights_history[algo][:, t]
             elseif algo == "RQR"
                 weights_history[algo][:, t], new_D, forecasts_history[algo][t] = online_adaptive_robust_quantile_regression(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q)
-                exp_weights[algo][:, t] .+= weights_history[algo][:, t]
                 exp_forecasts[algo][t] += forecasts_history[algo][t]
                 D_exp = new_D
+            end
+
+            for f in 1:n_forecasters
+                exp_weights[algo][f][i, t] = weights_history[algo][f, t]
+                exp_forecasts[algo][i, :] .= forecasts_history[algo]
             end
         end
     end
@@ -82,45 +89,72 @@ for i in 1:n_experiments
         if "mean_impute" in algorithms
             w0 = weights_history["mean_impute"][:, 1]
             results_w, results_f = quantile_regression_mean_imputation(forecasters_preds, realizations, w0, alpha, q)
-            exp_weights["mean_impute"][:, 2:end] .+= results_w[:, 2:end]
-            exp_forecasts["mean_impute"] .+= results_f
+
+            for f in 1:n_forecasters
+                exp_weights["mean_impute"][f][i, :] .= results_w[f, :]
+                exp_forecasts["mean_impute"][i, :] .= results_f
+            end
         end
         if "last_impute" in algorithms
             w0 = weights_history["last_impute"][:, 1]
             results_w, results_f = quantile_regression_last_impute(forecasters_preds, realizations, w0, alpha, q)
-            exp_weights["last_impute"][:, 2:end] .+= results_w[:, 2:end]
-            exp_forecasts["last_impute"] .+= results_f
-        end
-        if "oracle" in algorithms
-            w0 = weights_history["oracle"][:, 1]
-            results_w, results_f = quantile_regression_oracle(forecasters_preds, realizations, w0, alpha, q)
-            exp_weights["oracle"][:, 2:end] .+= results_w[:, 2:end]
-            exp_forecasts["oracle"] .+= results_f
+            
+            for f in 1:n_forecasters
+                exp_weights["last_impute"][f][i, :] .= results_w[f, :]
+                exp_forecasts["last_impute"][i, :] .= results_f
+            end
         end
     end
 end
 
-
 # Post-processing monte-carlo
-biasses = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
-variances = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
-losses = Dict([algo => zeros((T)) for algo in algorithms])
 
-exp_realizations = exp_realizations ./ n_experiments
+## Calculate tracking errors
+errors = Dict([algo => Dict([f => zeros(n_experiments, T) for f in 1:n_forecasters]) for algo in algorithms])
 for algo in algorithms
-    exp_weights[algo] = exp_weights[algo] ./ n_experiments
-    exp_forecasts[algo] = exp_forecasts[algo] ./ n_experiments
+    for f in 1:n_forecasters
+        for i in 1:n_experiments
+            errors[algo][f][i, :] .= calculate_instantaneous_errors(exp_weights[algo][f][i, :], true_weights[f, :])
+        end
+    end
+end
 
-    ## Metrics calculation
-    biasses[algo] = calculate_bias(exp_weights[algo], true_weights)
-    variances[algo] = calculate_variance(exp_weights[algo])
-    losses[algo] = calculate_mean_quantile_loss(exp_forecasts[algo], exp_realizations, q)
+# Calculate Metrics
+weights_mc = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
+biasses_mc = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
+losses_mc = Dict([algo => zeros(T) for algo in algorithms])
+
+## Calculate Monte-carlo Biasses and Weights
+for algo in algorithms
+    for f in 1:n_forecasters
+        weights_mc[algo][f, :] = mean(exp_weights[algo][f], dims=1)
+        biasses_mc[algo][f, :] = mean(errors[algo][f], dims=1)
+    end
+
+    temp_losses = Dict([algo => zeros((n_experiments, T)) for algo in algorithms])
+    for i in 1:n_experiments
+        temp_losses[algo][i, :] .= calculate_instantaneous_quantile_loss(exp_forecasts[algo][i, :], exp_realizations[i, :], q)
+    end
+    losses_mc[algo] .= vec(mean(temp_losses[algo], dims=1))
+end
+
+## Calculate Variances
+variances = Dict([algo => Dict([f => zeros(n_experiments, T) for f in 1:n_forecasters]) for algo in algorithms])
+variances_mc = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
+for algo in algorithms
+    for f in 1:n_forecasters
+        for i in 1:n_experiments
+            variances[algo][f][i, :] .= calculate_instantaneous_variance(errors[algo][f][i, :], biasses_mc[algo][f, :])
+        end
+
+        variances_mc[algo][f, :] = sum(variances[algo][f], dims=1) ./ (n_experiments - 1)
+    end
 end
 
 # Plot weights
 plot_weigths = plot(layout=(length(algorithms), 1), size=(1000, 1000), legend=:topright)
 for (i, algo) in enumerate(algorithms)
-    plot!(plot_weigths[i], 1:T, exp_weights[algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_weigths[i], 1:T, weights_mc[algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
           xlabel="Time", ylabel="Weights", title="Weights History Over Time - $algo")
 end
 
@@ -129,39 +163,50 @@ for (i, algo) in enumerate(algorithms)
 end
 display(plot_weigths)
 
-# Plot Forecasts 
-plot_forecasts = plot(layout=(length(algorithms), 1), size=(1000, 1000), legend=:topright)
-for (i, algo) in enumerate(algorithms)
-    plot!(plot_forecasts[i], 1:T, exp_forecasts[algo], label="$q", 
-          xlabel="Time", title="Forecasts Over Time - $algo")
-    plot!(plot_forecasts[i], 1:T, exp_realizations, label="Realization", color=:black, lw=2, ls=:dash)
-end
-display(plot_forecasts)
-
 # Plot Metrics
-cut_start = 2001
+cut_start = 5001
 
-plot_metrics = plot(size=(1000, 800), layout=(3, 1), legend=:topright)
-for algo in algorithms
-
-    # Plot Bias Over Time
-    mean_bias = mean(biasses[algo], dims=1)[cut_start:end]
-    plot!(plot_metrics[1], 1:length(mean_bias), mean_bias, label=algo)
-    xlabel!(plot_metrics[1], "Time")
-    ylabel!(plot_metrics[1], "Bias")
-    title!(plot_metrics[1], "Biasses Over Time")
-
-    # Plot Variance Over Time
-    mean_var = mean(variances[algo], dims=1)[cut_start:end]
-    plot!(plot_metrics[2], 1:length(mean_var), mean_var, label=algo)
-    xlabel!(plot_metrics[2], "Time")
-    ylabel!(plot_metrics[2], "Variance")
-    title!(plot_metrics[2], "Variances Over Time")
-
-    # Plot Mean Quantile Loss Over Time
-    plot!(plot_metrics[3], 1:length(losses[algo][cut_start:end]), losses[algo][cut_start:end], label=algo)
-    xlabel!(plot_metrics[3], "Time")
-    ylabel!(plot_metrics[3], "Loss")
-    title!(plot_metrics[3], "Quantile Loss Over Time")
+plot_biasses = plot(layout=(n_forecasters, 1), size=(1000, 300 * n_forecasters), legend=:topright)
+for f in 1:n_forecasters
+    for algo in algorithms
+        biass_w = biasses_mc[algo][f, cut_start:end]
+        plot!(plot_biasses[f], 1:length(biass_w), biass_w, label="$(algo)")
+    end
+    xlabel!(plot_biasses[f], "Time")
+    ylabel!(plot_biasses[f], "Bias")
+    title!(plot_biasses[f], "Bias Over Time - w$f")
 end
-display(plot_metrics)
+display(plot_biasses)
+
+plot_variances = plot(layout=(n_forecasters, 1), size=(1000, 300 * n_forecasters), legend=:topright)
+for f in 1:n_forecasters
+    for algo in algorithms
+        var_w = variances_mc[algo][f, cut_start:end]
+        plot!(plot_variances[f], 1:length(var_w), var_w, label="$(algo)")
+    end
+    xlabel!(plot_variances[f], "Time")
+    ylabel!(plot_variances[f], "Variance")
+    title!(plot_variances[f], "Variance Over Time - w$f")
+end
+display(plot_variances)
+
+# Plot Losses
+plot_losses = plot(layout=(length(algorithms) + 1, 1), size=(1000, 400 * (length(algorithms) + 1)), legend=:topright)
+for (i, algo) in enumerate(algorithms)
+    loss_algo = losses_mc[algo][cut_start:end]
+    plot!(plot_losses[i], 1:length(loss_algo), loss_algo, label=algo)
+    xlabel!(plot_losses[i], "Time")
+    ylabel!(plot_losses[i], "Loss")
+    title!(plot_losses[i], "Quantile Loss Over Time - $algo")
+end
+
+# Add subplot for running mean of quantile loss
+for (i, algo) in enumerate(algorithms)
+    running_mean = [mean(losses_mc[algo][cut_start:t]) for t in cut_start:T]
+    plot!(plot_losses[length(algorithms) + 1], 1:length(running_mean), running_mean, label=algo)
+end
+xlabel!(plot_losses[length(algorithms) + 1], "Time")
+ylabel!(plot_losses[length(algorithms) + 1], "Running Mean Loss")
+title!(plot_losses[length(algorithms) + 1], "Running Mean Quantile Loss")
+
+display(plot_losses)
