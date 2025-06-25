@@ -156,7 +156,7 @@ export data_generation_case_study_abrupt, data_generation_case_study_invariant, 
     end
 
     function generate_time_invariant_data(T, q)
-
+        
         mu1 = zeros(T).+ randn(T).*0.5
         mu2 = fill(1, T).+ randn(T).*0.5
         mu3 = fill(2, T).+ randn(T).*0.5
@@ -228,11 +228,11 @@ export data_generation_case_study_abrupt, data_generation_case_study_invariant, 
         return true_values, forecasters_dict, true_weights
     end
 
-    function generate_dynamic_data(T, q)
+    function generate_dynamic_data(T, q, n=4)
 
-        mu1 = zeros(T) .+ randn(T).*0.5
-        mu2 = fill(1, T) .+ randn(T).*0.5
-        mu3 = fill(2, T) .+ randn(T).*0.5
+        mu1 = zeros(T) .+ randn(T)*0.5
+        mu2 = fill(1, T) .+ randn(T)*0.5
+        mu3 = fill(2, T) .+ randn(T)*0.5
         sig1 = 1
         sig2 = 1
         sig3 = 1
@@ -250,14 +250,12 @@ export data_generation_case_study_abrupt, data_generation_case_study_invariant, 
 
         for t in 1:T
 
-            if t < T/4 || (t >= T/2 && t < 3/4*T)
-                w[1] = lambda * w[1] + (1-lambda) * w1[1]
-                w[2] = lambda * w[2] + (1-lambda) * w1[2]
-                w[3] = lambda * w[3] + (1-lambda) * w1[3]
+            split_index = floor(Int, t / T * n)
+
+            if split_index % 2 == 0
+                w  = lambda .* w + (1-lambda) .* w1
             else
-                w[1] = lambda * w[1] + (1-lambda) * w2[1]
-                w[2] = lambda * w[2] + (1-lambda) * w2[2]
-                w[3] = lambda * w[3] + (1-lambda) * w2[3]
+                w  = lambda .* w + (1-lambda) .* w2
             end
             
             mu_y = mu1[t] .* w[1] .+ mu2[t] .* w[2] .+ mu3[t] .* w[3]

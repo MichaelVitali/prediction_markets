@@ -36,7 +36,7 @@ export online_quantile_regression, online_quantile_regression_update
         new_weights = prev_forecaster_weights .- learning_rate .* lks
         new_weights = project_to_simplex(new_weights)
 
-        return new_weights
+        return new_weights, agg_quantile_t
 
     end
 end

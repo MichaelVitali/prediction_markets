@@ -18,11 +18,11 @@ using .AdaptiveRobustRegression
 using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
-n_experiments = 100
-T = 10000
+n_experiments = 200
+T = 20000
 q = 0.5
 n_forecasters = 3
-algorithms = ["RQR"]
+algorithms = ["RQR", "QR"]
 show_benchmarks = true
 
 if show_benchmarks
@@ -43,6 +43,9 @@ for i in ProgressBar(1:n_experiments)
     forecasts_history = Dict([algo => zeros((T)) for algo in algorithms])
     for algo in algorithms
         weights_history[algo][:, 1] .= initialize_weights(n_forecasters)
+        for f in 1:n_forecasters
+            exp_weights[algo][f][i, 1] = initialize_weights(n_forecasters)[f]
+        end
     end
     
     # Data generation
@@ -67,7 +70,7 @@ for i in ProgressBar(1:n_experiments)
         
         for algo in algorithms
             if algo == "QR"
-                weights_history[algo][:, t] = online_quantile_regression_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q)
+                weights_history[algo][:, t], forecasts_history[algo][t] = online_quantile_regression_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q)
             elseif algo == "RQR"
                 weights_history[algo][:, t], new_D, forecasts_history[algo][t] = online_adaptive_robust_quantile_regression(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q)
                 exp_forecasts[algo][t] += forecasts_history[algo][t]
