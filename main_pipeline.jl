@@ -1,7 +1,7 @@
 using LinearAlgebra
 using Plots
 using DataStructures
-
+using ProgressBars
 
 include("functions/functions.jl")
 include("functions/functions_payoff.jl")
@@ -24,16 +24,17 @@ using .AdaptiveRobustRegression
 # Settings Monte-Carlo simulation
 n_experiments = 100
 T = 40000
-q = 0.5
+q = 0.9
 n_forecasters = 3
-algorithms = ["QR"]
+algorithms = ["QR", "RQR"]
 payoff_functions = ["Shapley", "LOO"]
 
 exp_weights = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
 exp_payoffs = Dict([payoff => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for payoff in payoff_functions])
 true_weights = nothing
 
-for i in 1:n_experiments
+for i in ProgressBar(1:n_experiments)
+#for i in 1:n_experiments
 
     # Weights initialization
     weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
@@ -43,14 +44,15 @@ for i in 1:n_experiments
     end
     
     # Data generation
-    realizations, forecasters_preds, true_weights = generate_dynamic_data(T, q)
+    realizations, forecasters_preds, true_weights = generate_abrupt_data(T, q)
     global true_weights = true_weights
     sorted_f = sort(collect(forecasters_preds), by=first)
     sorted_forecasters = OrderedDict(sorted_f)
     payoffs_exp = Dict([payoff => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for payoff in payoff_functions])
      # Initialization RQR
     if "RQR" in algorithms
-        alpha = Int.(rand(n_forecasters, T) .< 0.1)
+        # Ensure not all values in any column are 1
+        alpha = Int.(rand(n_forecasters, T) .< 0.05)
         D_exp = zeros(n_forecasters, n_forecasters)
     end
 
@@ -62,6 +64,7 @@ for i in 1:n_experiments
         for algo in algorithms
             if algo == "RQR"
                 weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q)
+                prev_D = D_exp
                 D_exp = new_D
                 exp_weights[algo][:, t] .+= weights_history[algo][:, t]
             elseif algo == "QR"
@@ -71,15 +74,43 @@ for i in 1:n_experiments
 
             # Payoff calculation
             if "variance" in payoff_functions
-                payoffs_exp["variance"][algo][:, t] = proportion_variance_payoff(weights_history[algo][:, t])
+                payoffs_exp["variance"][algo][:, t] = proportion_variance_payoff(weights_history[algo][:, t-1])
             end
-            if "LOO" in payoff_functions
-                temp_payoffs = leave_one_out_payoff(forecasters_preds_t, weights_history[algo][:, t], y_true, q)
-                payoffs_exp["LOO"][algo][:, t] = payoff_update(payoffs_exp["LOO"][algo][:, t-1], temp_payoffs, 0.999)
-            end
-            if "Shapley" in payoff_functions
-                temp_payoffs = shapley_payoff(forecasters_preds_t, weights_history[algo][:, t], y_true, q)
-                payoffs_exp["Shapley"][algo][:, t] = payoff_update(payoffs_exp["Shapley"][algo][:, t-1], temp_payoffs, 0.999)
+
+            for payoff in payoff_functions
+                ## This section extract only the available forecasters for the payoff calculus
+                if algo == "RQR"
+                    temp_forecasts_t = [forecasters_preds_t[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
+                    temp_weights_t = weights_history[algo][:, t-1] .+ prev_D * alpha[:, t]
+                    temp_weights_t = [temp_weights_t[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
+                else
+                    temp_forecasts_t = forecasters_preds_t
+                    temp_weights_t = weights_history[algo][:, t-1]
+                end
+
+                ## Payoff Calculation
+                temp_payoffs = nothing
+                if payoff == "LOO"
+                    if length(temp_weights_t) > 0
+                        temp_payoffs = leave_one_out_payoff(temp_forecasts_t, temp_weights_t, y_true, q)
+                    end
+                elseif payoff == "Shapley"
+                    if length(temp_weights_t) > 0
+                        temp_payoffs = shapley_payoff(temp_forecasts_t, temp_weights_t, y_true, q)
+                    end
+                end
+                ## If some forecaster is missing their payoff is added as zero
+                if algo == "RQR"
+                    if temp_payoffs === nothing
+                        temp_payoffs = zeros(n_forecasters)
+                    else
+                        for j in findall(a -> a == 1, alpha[:, t])
+                            insert!(temp_payoffs, j, 0.0)
+                        end
+                    end
+                end
+                payoffs_exp[payoff][algo][:, t] = payoff_update(payoffs_exp[payoff][algo][:, t-1], temp_payoffs, 0.999)
+
             end
         end
     end
@@ -98,6 +129,7 @@ for algo in algorithms
     
     for payoff in payoff_functions
         exp_payoffs[payoff][algo] = exp_payoffs[payoff][algo] ./ n_experiments
+        #exp_payoffs[payoff][algo] = exp_payoffs[payoff][algo] ./ sum(exp_payoffs[payoff][algo], dims=1)
     end
 end
 

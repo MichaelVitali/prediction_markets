@@ -19,10 +19,10 @@ using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
 n_experiments = 200
-T = 20000
-q = 0.5
+T = 30000
+q = 0.9
 n_forecasters = 3
-algorithms = ["RQR", "QR"]
+algorithms = ["RQR"]
 show_benchmarks = true
 
 if show_benchmarks
