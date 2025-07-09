@@ -2,6 +2,7 @@ using LinearAlgebra
 using Plots
 using DataStructures
 using ProgressBars
+using Base.Threads
 
 include("functions/functions.jl")
 include("functions/functions_payoff.jl")
@@ -24,7 +25,7 @@ using .AdaptiveRobustRegression
 # Settings Monte-Carlo simulation
 n_experiments = 100
 T = 40000
-q = 0.9
+q = 0.5
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
 payoff_functions = ["Shapley", "LOO"]
@@ -33,8 +34,8 @@ exp_weights = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
 exp_payoffs = Dict([payoff => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for payoff in payoff_functions])
 true_weights = nothing
 
-for i in ProgressBar(1:n_experiments)
-#for i in 1:n_experiments
+#for i in ProgressBar(1:n_experiments)
+Threads.@threads for i in ProgressBar(1:n_experiments)
 
     # Weights initialization
     weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
@@ -44,7 +45,7 @@ for i in ProgressBar(1:n_experiments)
     end
     
     # Data generation
-    realizations, forecasters_preds, true_weights = generate_abrupt_data(T, q)
+    realizations, forecasters_preds, true_weights = generate_dynamic_data_sin(T, q, 2)
     global true_weights = true_weights
     sorted_f = sort(collect(forecasters_preds), by=first)
     sorted_forecasters = OrderedDict(sorted_f)

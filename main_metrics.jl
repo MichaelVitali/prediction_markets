@@ -3,6 +3,7 @@ using Plots
 using DataStructures
 using Statistics
 using ProgressBars
+using Base.Threads
 
 include("functions/functions.jl")
 include("functions/metrics.jl")
@@ -18,9 +19,9 @@ using .AdaptiveRobustRegression
 using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
-n_experiments = 200
-T = 30000
-q = 0.9
+n_experiments = 500
+T = 20000
+q = 0.5
 n_forecasters = 3
 algorithms = ["RQR"]
 show_benchmarks = true
@@ -36,7 +37,7 @@ exp_realizations = zeros(n_experiments, T)
 true_weights = nothing
 
 
-for i in ProgressBar(1:n_experiments)
+Threads.@threads for i in ProgressBar(1:n_experiments)
 
     # Weights initialization
     weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
