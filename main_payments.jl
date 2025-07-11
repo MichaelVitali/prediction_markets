@@ -20,13 +20,13 @@ using .Shapley
 using .AdaptiveRobustRegression
 
 # Environment Settings
-q = 0.5
+q = 0.9
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
 daily_reward = 100
 T = 10000
-n_experiments = 100
+n_experiments = 500
 
 # Environment Variables
 payoffs = Dict([algo => zeros(n_forecasters, T) for algo in algorithms])
@@ -79,7 +79,6 @@ rewards[algo] = rewards[algo] ./ n_experiments
 algo = "RQR"
 missing_forecast = 2
 
-
 Threads.@threads for exp in 1:n_experiments
     # Experiment Variables
     weights_exp = zeros(n_forecasters, T)
@@ -95,7 +94,7 @@ Threads.@threads for exp in 1:n_experiments
 
     D_exp = zeros(n_forecasters, n_forecasters)
     alpha = zeros(n_forecasters, T)
-    alpha[missing_forecast, :] = Int.(rand(T) .< 0.1)
+    alpha[missing_forecast, :] = Int.(rand(T) .< 0.9)
 
     for t in 2:T
         forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
@@ -133,15 +132,22 @@ weights[algo] = weights[algo] ./ n_experiments
 rewards[algo] = rewards[algo] ./ n_experiments
 
 
-forecaster_idx = 1
+#window = 9999
 window = 1000
+plot_rewards = plot(layout=(n_forecasters-1, 1), size=(1000, 500))
 
-plot_rewards = plot(size=(1000, 500))
-plot!(plot_rewards, T-window:T, payoffs["QR"][forecaster_idx, end-window:end], label="QR - Forecaster $forecaster_idx", lw=2)
-plot!(plot_rewards, T-window:T, payoffs["RQR"][forecaster_idx, end-window:end], label="RQR - Forecaster $forecaster_idx", lw=2)
-xlabel!(plot_rewards, "Time")
-ylabel!(plot_rewards, "Cumulative Reward")
-title!(plot_rewards, "Rewards for QR and RQR Algorithms (Forecaster $forecaster_idx)")
+for forecaster_idx in 1:n_forecasters
+    if forecaster_idx == missing_forecast
+        continue
+    end
+    i = forecaster_idx - (forecaster_idx > missing_forecast ? 1 : 0)
+    plot!(plot_rewards[i], T-window:T, rewards["QR"][forecaster_idx, end-window:end], label="QR - Forecaster $forecaster_idx", lw=2)
+    plot!(plot_rewards[i], T-window:T, rewards["RQR"][forecaster_idx, end-window:end], label="RQR - Forecaster $forecaster_idx", lw=2)
+    xlabel!(plot_rewards[i], "Time")
+    ylabel!(plot_rewards[i], "£")
+    title!(plot_rewards[i], "Reward Forecaster $forecaster_idx")
+end
+
 display(plot_rewards)
 
 plot_weigths = plot(layout=(length(algorithms), 1), size=(1000, 500))
@@ -149,4 +155,4 @@ for (i, algo) in enumerate(algorithms)
     plot!(plot_weigths[i], 1:T, weights[algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
           xlabel="Time", ylabel="Weights", title="Weights History Over Time - $algo")
 end
-display(plot_weigths)
+#display(plot_weigths)
