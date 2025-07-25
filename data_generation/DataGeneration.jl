@@ -3,7 +3,7 @@ using Statistics
 using Distributions
 using LinearAlgebra
 
-export data_generation_case_study_abrupt, data_generation_case_study_invariant, generate_time_invariant_data, data_generation_case_study_dynamic, generate_abrupt_data, generate_dynamic_data, generate_dynamic_data_sin
+export data_generation_case_study_abrupt, data_generation_case_study_invariant, generate_time_invariant_data, data_generation_case_study_dynamic, generate_abrupt_data, generate_dynamic_data, generate_dynamic_data_sin, generate_time_invariant_data_multiple_lead_times
 
     function data_generation_case_study_invariant(case_study, T, q)
 
@@ -164,6 +164,7 @@ export data_generation_case_study_abrupt, data_generation_case_study_invariant, 
         sig2 = 1
         sig3 = 1
         w = [0.1, 0.6, 0.3]
+        #w = [0.4, 0.2, 0.4]
 
         F1 = Normal.(mu1, sig1)
         F2 = Normal.(mu2, sig2)
@@ -184,6 +185,43 @@ export data_generation_case_study_abrupt, data_generation_case_study_invariant, 
             
         return true_values, forecasters_dict, true_weights
     end
+
+    function generate_time_invariant_data_multiple_lead_times(T, n, q)
+    
+    forecasters_dict = Dict("f1" => [], "f2" => [], "f3" => [])
+    true_values = []
+    true_weights = zeros(3, T)
+
+    for i in 1:T
+        mu1 = zeros(n).+ randn(n).*0.5
+        mu2 = fill(1, n).+ randn(n).*0.5
+        mu3 = fill(2, n).+ randn(n).*0.5
+        sig1 = 1
+        sig2 = 1
+        sig3 = 1
+        w = [0.1, 0.6, 0.3]
+
+        F1 = Normal.(mu1, sig1)
+        F2 = Normal.(mu2, sig2)
+        F3 = Normal.(mu3, sig3)
+
+        mu_y = mu1 .* w[1] .+ mu2 .* w[2] .+ mu3 .* w[3]
+        sig_y = w[1] * sig1 + w[2] * sig2 + w[3] * sig3
+        Y = Normal.(mu_y, sig_y)
+
+        f1 = quantile.(F1, q)
+        f2 = quantile.(F2, q)
+        f3 = quantile.(F3, q)
+
+        push!(forecasters_dict["f1"], f1)
+        push!(forecasters_dict["f2"], f2)
+        push!(forecasters_dict["f3"], f3)
+        push!(true_values, rand.(Y))
+        true_weights[:, i] = w
+    end
+
+    return true_values, forecasters_dict, true_weights
+end
 
     function generate_abrupt_data(T, q)
 
