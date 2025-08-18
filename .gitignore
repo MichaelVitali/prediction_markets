@@ -1,0 +1,6 @@
+*.png
+*.jpg
+*.pdf
+*.csv
+*.json
+plots/
