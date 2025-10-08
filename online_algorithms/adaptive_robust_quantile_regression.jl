@@ -10,6 +10,10 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
 
     function online_adaptive_robust_quantile_regression(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01)
 
+        """
+            Function calculates the update step for the adaptive robust quantile regression method. This function works only for lead time = 1.
+        """
+
         masked_x = x .* (1 .- alpha)
         agg_quantile_t = sum((prev_w .+ prev_D * alpha) .* masked_x)
 
@@ -25,6 +29,10 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
     end
 
     function online_adaptive_robust_quantile_regression_multiple_lead_times(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01)
+
+        """
+            Function calculates the update step for the adaptive robust quantile regression method. This function works for multiple lead times.
+        """
 
         masked_x = x .* (1 .- alpha)
         agg_quantile_t = sum((prev_w .+ prev_D * alpha) .* masked_x)

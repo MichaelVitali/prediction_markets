@@ -11,7 +11,7 @@ include("data_generation/DataGeneration.jl")
 include("online_algorithms/quantile_regression.jl")
 include("online_algorithms/adaptive_robust_quantile_regression.jl")
 include("payoff/leave_one_out.jl")
-include("payoff/new_shapley.jl")
+include("payoff/shapley_values.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .DataGeneration
@@ -21,11 +21,11 @@ using .Shapley
 using .AdaptiveRobustRegression
 
 # Environment Settings
-q = 0.5
+q = 0.9
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
-daily_reward = 100
+daily_reward = 500
 T = 10000
 n_experiments = 100
 delta = 0.7
@@ -115,7 +115,7 @@ Threads.@threads for exp in 1:n_experiments
 
     D_exp = zeros(n_forecasters, n_forecasters)
     alpha = zeros(n_forecasters, T)
-    alpha[missing_forecast, :] = Int.(rand(T) .< 0.05)
+    alpha[missing_forecast, :] = Int.(rand(T) .< 0.9)
 
     for t in 2:T
         forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]

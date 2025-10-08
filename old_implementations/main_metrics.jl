@@ -19,8 +19,8 @@ using .AdaptiveRobustRegression
 using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
-n_experiments = 500
-T = 20000
+n_experiments = 100
+T = 10000
 q = 0.5
 n_forecasters = 3
 algorithms = ["RQR"]

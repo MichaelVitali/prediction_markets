@@ -12,13 +12,11 @@ include("functions/functions_payoff.jl")
 include("data_generation/DataGeneration.jl")
 include("online_algorithms/quantile_regression.jl")
 include("online_algorithms/adaptive_robust_quantile_regression.jl")
-include("payoff/leave_one_out.jl")
-include("payoff/new_shapley.jl")
+include("payoff/shapley_values.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .DataGeneration
 using .QuantileRegression
-using .LOO
 using .Shapley
 using .AdaptiveRobustRegression
 
@@ -30,9 +28,9 @@ payoff_functions = "Shapley"
 total_reward = 100
 T = 20000
 n_experiments = 200
-lead_time = 1
+lead_time = 12
 delta = 0.7
-environment = "variant"
+environment = "invariant"
 
 # Environment Variables
 payoffs = Dict([q => Dict([algo => zeros(n_forecasters, T) for algo in algorithms]) for q in quantiles])
@@ -175,7 +173,6 @@ for q in quantiles
             if length(temp_forecasts_t) > 0
                 temp_payoffs = shapley_payoff_multiple_lead_times(temp_forecasts_t, temp_weights_t, y_true, q)
                 forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i], y_true)) for i in 1:length(temp_forecasts_t)]
-                #temp_scores = 1 .- (forecasters_losses ./ sum(forecasters_losses))
                 temp_scores = [max(1 - (forecasters_losses[i] / sum(forecasters_losses)), eps()) for i in 1:length(forecasters_losses)]
             else 
                 temp_payoffs = zeros(n_forecasters)
@@ -238,11 +235,13 @@ for algo in algorithms
     end
 end
 
+my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
+x = 1:5000:T
+
 # Plot total rewards for each algorithm
-#= plot_rewards = plot(layout=(length(algorithms), 1), size=(800, 500))
+plot_rewards = plot(layout=(length(algorithms), 1), size=(800, 500))
 for (i, algo) in enumerate(algorithms)
     plot!(plot_rewards[i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-    xlabel="Time", 
     ylabel="Total reward (£)",
     legend=false,
     fg_legend=:transparent,
@@ -252,6 +251,7 @@ for (i, algo) in enumerate(algorithms)
     bottom_margin=2mm,
     left_margin=5mm,
     tickfontsize=12,
+    xticks=(x, my_tick_formatter(x)),
     lw=2
     )
 end
@@ -263,6 +263,12 @@ plot!(plot_rewards,
       fg_legend=:transparent,
       bg_legend=:transparent,
       top_margin=10mm)
+plot!(
+    plot_rewards,
+    subplot=2,
+    xlabel="Time (10\u00b3)",
+    xlabelfontsize=14
+)
 display(plot_rewards)
 savefig(plot_rewards, "plots/rewards/plot_total_rewards_$(lead_time)lt_$environment.pdf")
 
@@ -301,10 +307,10 @@ for (i, algo) in enumerate(algorithms)
     )
 end
 display(plot_in_out_rewards)
-savefig(plot_in_out_rewards, "plots/rewards/plot_total_rewards_in_out_$(lead_time)lt_$environment.pdf") =#
+savefig(plot_in_out_rewards, "plots/rewards/plot_total_rewards_in_out_$(lead_time)lt_$environment.pdf")
 
 # Plot total reward for each quantile
-#= plot_reward_quantiles = plot(layout=(length(quantiles), length(algorithms)), size=(1000, 800))
+plot_reward_quantiles = plot(layout=(length(quantiles), length(algorithms)), size=(1000, 800))
 for (i, algo) in enumerate(algorithms)
     for (j, q) in enumerate(quantiles)
         
@@ -332,7 +338,7 @@ plot!(plot_reward_quantiles[1, 1],
       bg_legend=:transparent,
       top_margin=10mm)
 display(plot_reward_quantiles)
-savefig(plot_reward_quantiles, "plots/rewards/plot_total_rewards_quantiles_$(lead_time)lt_$environment.pdf") =#
+savefig(plot_reward_quantiles, "plots/rewards/plot_total_rewards_quantiles_$(lead_time)lt_$environment.pdf")
 
 # Plot instantaneous vs cumulative total reward
 plot_insta_cum_reward = plot(layout=(2, length(algorithms)), size=(1000, 800)) 

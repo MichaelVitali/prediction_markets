@@ -92,8 +92,6 @@ function calculate_shapley_values(forecasters_dists, forecasters_weigths::Dict, 
 end
 
 
-
-
 ####### Main #######
 quantiles = [0.1, 0.5, 0.9]
 forecasters_dists = [

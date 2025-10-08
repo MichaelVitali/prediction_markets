@@ -11,7 +11,7 @@ include("online_algorithms/quantile_regression.jl")
 include("online_algorithms/adaptive_robust_quantile_regression.jl")
 include("payoff/proportion_variance.jl")
 include("payoff/leave_one_out.jl")
-include("payoff/new_shapley.jl")
+include("payoff/shapley_values.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .DataGeneration
@@ -23,16 +23,17 @@ using .AdaptiveRobustRegression
 
 
 # Settings Monte-Carlo simulation
-n_experiments = 100
-T = 40000
+n_experiments = 200
+T = 10000
 q = 0.5
 n_forecasters = 3
-algorithms = ["QR", "RQR"]
-payoff_functions = ["Shapley", "LOO"]
+algorithms = ["QR"]
+payoff_functions = ["Shapley"]
 
 exp_weights = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
 exp_payoffs = Dict([payoff => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for payoff in payoff_functions])
 true_weights = nothing
+alpha = Int.(rand(n_forecasters, T) .< 0.05)
 
 #for i in ProgressBar(1:n_experiments)
 Threads.@threads for i in ProgressBar(1:n_experiments)
@@ -45,7 +46,7 @@ Threads.@threads for i in ProgressBar(1:n_experiments)
     end
     
     # Data generation
-    realizations, forecasters_preds, true_weights = generate_dynamic_data_sin(T, q, 2)
+    realizations, forecasters_preds, true_weights = generate_time_invariant_data(T, q)
     global true_weights = true_weights
     sorted_f = sort(collect(forecasters_preds), by=first)
     sorted_forecasters = OrderedDict(sorted_f)
@@ -53,7 +54,7 @@ Threads.@threads for i in ProgressBar(1:n_experiments)
      # Initialization RQR
     if "RQR" in algorithms
         # Ensure not all values in any column are 1
-        alpha = Int.(rand(n_forecasters, T) .< 0.05)
+        #alpha = Int.(rand(n_forecasters, T) .< 0.05)
         D_exp = zeros(n_forecasters, n_forecasters)
     end
 

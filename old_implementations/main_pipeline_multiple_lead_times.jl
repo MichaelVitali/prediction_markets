@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Plots
+using Plots.PlotMeasures
 using DataStructures
 using ProgressBars
 using Base.Threads
@@ -11,7 +12,7 @@ include("online_algorithms/quantile_regression.jl")
 include("online_algorithms/adaptive_robust_quantile_regression.jl")
 include("payoff/proportion_variance.jl")
 include("payoff/leave_one_out.jl")
-include("payoff/new_shapley.jl")
+include("payoff/shapley_values.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .DataGeneration
@@ -24,7 +25,7 @@ using .AdaptiveRobustRegression
 
 # Settings Monte-Carlo simulation
 n_experiments = 200
-T = 10000
+T = 20000
 lead_time = 1
 q = 0.5
 n_forecasters = 3
@@ -129,24 +130,39 @@ end
 plot_weigths = plot(layout=(length(algorithms), 1), size=(1000, 500))
 for (i, algo) in enumerate(algorithms)
     plot!(plot_weigths[i], 1:T, exp_weights[algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-          xlabel="Time", ylabel="Weights", title="Weights History Over Time - $algo")
-end
+          xlabel="Time", 
+          ylabel="Weights", 
+          title="Weights Over Time - $algo",
+          legend=:topright,
+          legendfont=:8,
+          fg_legend=:transparent,
+          bg_legend=:transparent,
+          titlefontsize=16,
+          ylabelfontsize=12,
+          xlabelfontsize=12,
+          bottom_margin=5mm,
+          left_margin=5mm
+          )
 
-for (i, algo) in enumerate(algorithms)
     plot!(plot_weigths[i], 1:T, true_weights', label=["w1" "w2" "w3"])
 end
+
 display(plot_weigths)
-display(exp_weights["RQR"])
+savefig(plot_weigths, "plots/plot_weight_1_lead_time_q_50.pdf")
 
 # Plot payoffs
 plot_payoffs_dict = Dict()
 for payoff in payoff_functions
-    plot_payoffs = plot(layout=(length(algorithms), 1), size=(1000, 500))
+    plot_payoffs = plot(layout=(length(algorithms), 1), size=(1200, 600))
     for (i, algo) in enumerate(algorithms)
         plot!(plot_payoffs[i], 1:T, exp_payoffs[payoff][algo]', 
               label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
               xlabel="Time", ylabel="Payoff", 
-              title="$payoff Over Time - $algo")
+              title="$payoff Over Time - $algo",
+              legend=:topright,
+              legendfont=:8,
+              fg_legend=:transparent
+              )
     end
-    display(plot_payoffs)
+    #display(plot_payoffs)
 end
