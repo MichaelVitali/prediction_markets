@@ -29,13 +29,13 @@ export shapley_payoff, shapley_payoff_multiple_lead_times
 
                 # Calculate loss of subset combined forecast
                 subset_forecast = sum(sub .* sub_weights)
-                loss_subset = QuantileLoss(q).(subset_forecast, y_true)
+                loss_subset = QuantileLoss(q).(subset_forecast .- y_true)
 
                 # Calculate loss of subset combined forecast including forecaster f
                 expanded_subset = push!(sub, forecasters_preds[f])
                 expanded_weights = push!(sub_weights, weights_combination[f])
                 expanded_forecast = sum(expanded_subset .* expanded_weights)
-                loss_expanded = QuantileLoss(q).(expanded_forecast, y_true)
+                loss_expanded = QuantileLoss(q).(expanded_forecast .- y_true)
 
                 # Update shapley value
                 value += factor * (loss_subset - loss_expanded)
@@ -46,9 +46,9 @@ export shapley_payoff, shapley_payoff_multiple_lead_times
             factor = factorial(w) * factorial((n_forecasters - w - 1)) / factorial(n_forecasters)
 
             subset_forecast = 0.0
-            loss_subset = QuantileLoss(q).(subset_forecast, y_true)
+            loss_subset = QuantileLoss(q).(subset_forecast .- y_true)
             expanded_forecast = forecasters_preds[f] * weights_combination[f]
-            loss_expanded = QuantileLoss(q).(expanded_forecast, y_true)
+            loss_expanded = QuantileLoss(q).(expanded_forecast .- y_true)
             value += factor * (loss_subset - loss_expanded)
 
             shapley_values[f] = value
@@ -77,13 +77,13 @@ export shapley_payoff, shapley_payoff_multiple_lead_times
 
                 # Calculate loss of subset combined forecast
                 subset_forecast = sum(sub .* sub_weights)
-                loss_subset = mean(QuantileLoss(q).(subset_forecast, y_true))
+                loss_subset = mean(QuantileLoss(q).(subset_forecast .- y_true))
 
                 # Calculate loss of subset combined forecast including forecaster f
                 expanded_subset = push!(sub, forecasters_preds[f])
                 expanded_weights = push!(sub_weights, weights_combination[f])
                 expanded_forecast = sum(expanded_subset .* expanded_weights)
-                loss_expanded = mean(QuantileLoss(q).(expanded_forecast, y_true))
+                loss_expanded = mean(QuantileLoss(q).(expanded_forecast .- y_true))
 
                 # Update shapley value
                 value += factor * (loss_subset - loss_expanded)
@@ -94,9 +94,9 @@ export shapley_payoff, shapley_payoff_multiple_lead_times
             factor = factorial(w) * factorial((n_forecasters - w - 1)) / factorial(n_forecasters)
 
             subset_forecast = 0.0
-            loss_subset = mean(QuantileLoss(q).(subset_forecast, y_true))
+            loss_subset = mean(QuantileLoss(q).(subset_forecast .- y_true))
             expanded_forecast = forecasters_preds[f] * weights_combination[f]
-            loss_expanded = mean(QuantileLoss(q).(expanded_forecast, y_true))
+            loss_expanded = mean(QuantileLoss(q).(expanded_forecast .- y_true))
             value += factor * (loss_subset - loss_expanded)
 
             shapley_values[f] = value

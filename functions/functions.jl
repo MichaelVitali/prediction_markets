@@ -6,79 +6,7 @@ using LinearAlgebra
 using DataFrames
 using LossFunctions
 
-export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_averaging_dists, quantile_averaging_dataframes, quantile_loss_gradient, quantile_loss, initialize_weights, optimal_weights, constrained_OLS, calculate_quantile_loss_dataframe, project_to_simplex
-
-    function quantile_averaging_dists(dists, quantiles, weights)
-
-        generated_quantiles = Matrix{Float64}(undef, length(dists), length(quantiles))
-        for (i, dist) in enumerate(dists)
-            dist_quantiles = [quantile(dist, quant) for quant in quantiles]
-            generated_quantiles[i, :] = dist_quantiles
-        end
-
-        weights = weights / sum(weights)
-        averaged_quantiles = generated_quantiles .* weights
-        averaged_quantiles = sum(averaged_quantiles, dims=1)
-
-        return averaged_quantiles
-    end
-
-    function quantile_averaging_dist_multiple_times(forecasters_dists, quantiles, weigths, T)
-
-        avg_quantiles = Matrix{Float64}(undef, length(quantiles), T)
-        for t in range(1, stop=T)
-            dists_t = values(forecasters_dists[t])
-            avg = quantile_averaging_dists(dists_t, quantiles, weigths)
-            avg_quantiles[:, t] = avg
-        end
-
-        return avg_quantiles
-    end
-
-    function quantile_averaging_dataframes(forecasters_dfs::Dict, quantiles, weights, T)
-
-        q_names = ["q"*string(Int(q*100)) for q in quantiles]
-        avg_quantiles_df = DataFrame([name => zeros(T) for name in q_names])
-    
-        #weights = weights / sum(weights)
-        for q in q_names
-            avg_quantile = zeros(T)
-    
-            for (i, forecaster) in enumerate(keys(forecasters_dfs))
-                forecaster_q = forecasters_dfs[forecaster][:, q]
-                avg_quantile = avg_quantile .+ weights[i] .* forecaster_q
-            end
-    
-            avg_quantiles_df[:, q] = avg_quantile
-        end
-    
-        return avg_quantiles_df
-    
-    end
-
-    function calculate_quantile_loss_dataframe(y_true, y_preds, quantiles)
-
-        if typeof(y_true) == Float64
-            y_true = [y_true]
-        end
-    
-        losses = Array{Float64}(undef, 1)
-        for q in quantiles
-            q_name = "q" * string(Int(q*100))
-            loss = mean(QuantileLoss(q), y_preds[:, q_name], y_true)
-            push!(losses, loss)
-        end
-    
-        return mean(losses)
-    
-    end
-
-    function get_avg_distribution(avg_quantiles::Array, dist::Distribution=Normal)
-
-        avg_dist = fit(dist, avg_quantiles)
-        return avg_dist
-
-    end
+export  quantile_loss_gradient, initialize_weights, project_to_simplex
 
     function quantile_loss_gradient(y_true, y_hat, q)
         if y_hat > y_true
@@ -88,43 +16,11 @@ export  get_avg_distribution, quantile_averaging_dist_multiple_times, quantile_a
         end
     end
 
-    function quantile_loss(y_hat, y_true, q)
-        if y_true >= y_hat
-            return q .* (y_true .- y_hat)
-        else
-            return (1 - q) .* (y_hat .- y_true)
-        end
-    end
-
     function initialize_weights(n_experts::Integer)
 
         weigths = fill(1 / n_experts, n_experts)
-    
         return weigths
     
-    end
-
-    function optimal_weights(forecaster_preds, y_true)
-
-        X = hcat([(y_true .- forecaster_preds[f]) for f in keys(forecaster_preds)]...)
-        covariance_matrix = cov(X)
-        id = ones(size(X, 2))
-        optimal_weights = (covariance_matrix \ id) / (id' * (covariance_matrix \  id))
-
-        return optimal_weights
-
-    end
-
-    function constrained_OLS(forecaster_preds, y_true)
-
-        F = hcat([forecaster_preds[f] for f in keys(forecaster_preds)]...)
-        l = ones(length(keys(forecaster_preds)))
-        alpha = (transpose(F) * F) \ transpose(F) * y_true
-        lambda = (l' * alpha .- 1) ./ (l' * ((transpose(F) * F) \ l))
-        
-        optimal_w = alpha .- (lambda * ((transpose(F) * F) \ l))
-        return optimal_w
-
     end
 
     function project_to_simplex(v)

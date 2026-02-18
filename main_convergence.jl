@@ -16,7 +16,7 @@ using .AdaptiveRobustRegression
 
 
 # Environment Settings
-n_experiments = 200
+n_experiments = 100
 T = 20000
 lead_time = 1
 quantiles = [0.1, 0.5, 0.9]

@@ -37,7 +37,7 @@ function calculate_quantile_loss(y_true, y_preds, quantiles)
 
     losses = Array{Float64}(undef, 1)
     for (i, q) in enumerate(quantiles)
-        loss = mean(QuantileLoss(q), y_preds[i, :], y_true)
+        loss = mean(QuantileLoss(q).(y_preds[i, :] .- y_true))
         push!(losses, loss)
     end
 

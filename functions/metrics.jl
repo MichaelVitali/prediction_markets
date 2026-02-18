@@ -31,7 +31,7 @@ export calculate_instantaneous_errors, calculate_instantaneous_variance, calcula
 
     function calculate_instantaneous_quantile_loss(y_hat, y_true, q)
 
-        losses = QuantileLoss(q).(y_hat, y_true)
+        losses = QuantileLoss(q).(y_hat .- y_true)
         return losses
     end
 

@@ -83,7 +83,7 @@ for q in quantiles
 
             weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.01)
             temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
-            forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i], y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
+            forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
             temp_scores = 1 .- (forecasters_losses ./ sum(forecasters_losses))
             payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
 
@@ -172,7 +172,7 @@ for q in quantiles
             forecasters_losses = nothing
             if length(temp_forecasts_t) > 0
                 temp_payoffs = shapley_payoff_multiple_lead_times(temp_forecasts_t, temp_weights_t, y_true, q)
-                forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i], y_true)) for i in 1:length(temp_forecasts_t)]
+                forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i] .- y_true)) for i in 1:length(temp_forecasts_t)]
                 temp_scores = [max(1 - (forecasters_losses[i] / sum(forecasters_losses)), eps()) for i in 1:length(forecasters_losses)]
             else 
                 temp_payoffs = zeros(n_forecasters)

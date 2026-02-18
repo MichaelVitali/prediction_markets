@@ -18,6 +18,9 @@ using .QuantileRegression
 using .AdaptiveRobustRegression
 using .RealWorldtestData
 
+using Pkg
+Pkg.activate(@__DIR__)
+
 
 # Environment Settings
 n_experiments = 1
@@ -26,9 +29,11 @@ lead_time = 96
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 2
 algorithms = ["QR"]
-path_ecmwf = "real_world_test/data/forecasts_ecmwf_ifs_paper.parquet"
-path_noaa = "real_world_test/data/forecasts_noaa_gfs_paper.parquet"
-path_elia = "real_world_test/data/historical_load_data_predico_2025_08_15.csv"
+
+root_dir = @__DIR__
+path_ecmwf = joinpath(root_dir, "saved_models", "predictions_ecmwf_ifs.parquet")
+path_noaa  = joinpath(root_dir, "saved_models", "predictions_noaa_gfs.parquet")
+path_elia = joinpath(root_dir, "data", "historical_load_data_predico_2025_12_31.csv")
 
 # Environment Variables
 exp_weights = Dict([q => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for q in quantiles])
@@ -63,7 +68,7 @@ for q in quantiles
         forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
         y_true = true_prod[t]
         push!(realizations[q], denormalize(y_true, scaler_target))
-        push!(elia_forecasts[q], denormalize(forecasts_elia[t], scaler_elia))
+        #push!(elia_forecasts[q], denormalize(forecasts_elia[t], scaler_elia))
 
         for f in keys(forecasters_preds)
             if f == "ecmwf"
@@ -149,9 +154,9 @@ for q in quantiles
             loss_t_ecmwf = sqrt(mean((realizations[q][t] .- algo_forecasts[q]["ecmwf"][t]).^2))
             loss_t_noaa = sqrt(mean((realizations[q][t] .- algo_forecasts[q]["noaa"][t]).^2))
         else
-            loss_t = mean(QuantileLoss(q).(realizations[q][t], aggregated_forecasts[q][algo][t]))
-            loss_t_ecmwf = mean(QuantileLoss(q).(realizations[q][t], algo_forecasts[q]["ecmwf"][t]))
-            loss_t_noaa = mean(QuantileLoss(q).(realizations[q][t], algo_forecasts[q]["noaa"][t]))
+            loss_t = mean(QuantileLoss(q).(realizations[q][t] .- aggregated_forecasts[q][algo][t]))
+            loss_t_ecmwf = mean(QuantileLoss(q).(realizations[q][t] .- algo_forecasts[q]["ecmwf"][t]))
+            loss_t_noaa = mean(QuantileLoss(q).(realizations[q][t] .- algo_forecasts[q]["noaa"][t]))
         end
         append!(losses_aggregated, loss_t)
         append!(losses_ecmwf, loss_t_ecmwf)

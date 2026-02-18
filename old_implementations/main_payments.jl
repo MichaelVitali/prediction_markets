@@ -65,7 +65,7 @@ Threads.@threads for exp in 1:n_experiments
 
         weights_exp[:, t], _ = online_quantile_regression_update(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.01)
         temp_payoffs = shapley_payoff(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
-        temp_scores = 1 .- (QuantileLoss(q).(forecasters_preds_t, y_true) ./ sum(QuantileLoss(q).(forecasters_preds_t, y_true)))
+        temp_scores = 1 .- (QuantileLoss(q).(forecasters_preds_t .- y_true) ./ sum(QuantileLoss(q).(forecasters_preds_t .- y_true)))
         payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
         scores_exp[:, t] = payoff_update(scores_exp[:, t-1], temp_scores, 0.999)
 
@@ -132,7 +132,7 @@ Threads.@threads for exp in 1:n_experiments
         temp_weights_t = [temp_weights_t[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
 
         temp_payoffs = shapley_payoff(temp_forecasts_t, temp_weights_t, y_true, q)
-        temp_scores = 1 .- (QuantileLoss(q).(temp_forecasts_t, y_true) ./ sum(QuantileLoss(q).(temp_forecasts_t, y_true)))
+        temp_scores = 1 .- (QuantileLoss(q).(temp_forecasts_t .- y_true) ./ sum(QuantileLoss(q).(temp_forecasts_t .- y_true)))
         if length(temp_payoffs) < n_forecasters
             insert!(temp_payoffs, missing_forecast, 0.0)
             insert!(temp_scores, missing_forecast, 0.0)
