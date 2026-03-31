@@ -27,7 +27,7 @@ algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
 total_reward = 100
 T = 20000
-n_experiments = 200
+n_experiments = 20
 lead_time = 12
 delta = 0.7
 environment = "invariant"
@@ -81,7 +81,7 @@ for q in quantiles
             forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
             y_true = realizations[t]
 
-            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.01)
+            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.2)
             temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
             forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
             temp_scores = 1 .- (forecasters_losses ./ sum(forecasters_losses))
@@ -159,7 +159,7 @@ for q in quantiles
             y_true = realizations[t]
 
             # Learning Phase
-            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q)
+            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.2)
             prev_D = D_exp
             D_exp = new_D
 

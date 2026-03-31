@@ -6,16 +6,18 @@ using LinearAlgebra
 using DataFrames
 using LossFunctions
 
-export  quantile_loss_gradient, initialize_weights, project_to_simplex
+export  quantile_loss_gradient, initialize_weights, project_to_simplex, quantile_loss
 
-    function quantile_loss_gradient(y_true, y_hat, q)
-        if y_hat > y_true
-            return (1 - q)
-        elseif y_true >= y_hat
-            return -q
-        end
+    function quantile_loss(y_true, y_hat, q)
+        error = y_true - y_hat
+        return error > 0 ? q * error : (q - 1) * error
     end
 
+    function quantile_loss_gradient(y_true, y_hat, q)
+        return y_hat > y_true ? (1 - q) : -q
+    end
+
+    
     function initialize_weights(n_experts::Integer)
 
         weigths = fill(1 / n_experts, n_experts)

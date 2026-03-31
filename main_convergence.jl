@@ -16,9 +16,9 @@ using .AdaptiveRobustRegression
 
 
 # Environment Settings
-n_experiments = 100
-T = 20000
-lead_time = 1
+n_experiments = 50
+T = 10000
+lead_time = 12
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
@@ -49,13 +49,15 @@ for q in quantiles
             ErrorException("The defined environment is not yet implemented")
         end
 
-        true_weights[q] = w # saving true weights for each forecaster 
+        if i == 1
+            true_weights[q] = w # saving true weights for each forecaster 
+        end
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
         # Initialization RQR
         if "RQR" in algorithms
-            alpha = Int.(rand(n_forecasters, T) .< 0.05)
+            alpha = Int.(rand(n_forecasters, T) .< 0.15)
             D_exp = zeros(n_forecasters, n_forecasters)
         end
 
@@ -67,12 +69,12 @@ for q in quantiles
             for algo in algorithms
                 # Forecasting combination and weights update
                 if algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.2)
                     prev_D = D_exp
                     D_exp = new_D
                     exp_weights[q][algo][:, t] .+= weights_history[algo][:, t]
                 elseif algo == "QR"
-                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.01)
+                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.2)
                     exp_weights[q][algo][:, t] .+= weights_history[algo][:, t]
                 end
             end
@@ -123,7 +125,7 @@ plot!(
     xlabelfontsize=14
 )
 display(plot_weigths)
-savefig(plot_weigths, "plots/convergence/plot_weight_$(environment)_1lt_all_q.pdf")
+#savefig(plot_weigths, "plots/convergence/plot_weight_$(environment)_1lt_all_q.pdf")
 
 # Plot weight for each quantile and algorithm
 for q in quantiles
@@ -157,5 +159,5 @@ for q in quantiles
         xlabelfontsize=14
     )
     display(plot_weights_q)
-    savefig(plot_weights_q, "plots/convergence/plot_weight_$(environment)_1lt_q$(Int(q*100)).pdf")
+    #savefig(plot_weights_q, "plots/convergence/plot_weight_$(environment)_1lt_q$(Int(q*100)).pdf")
 end
