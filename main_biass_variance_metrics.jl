@@ -20,15 +20,15 @@ using .AdaptiveRobustRegression
 using .RobustOptimizationBenchmarks
 
 # Settings Monte-Carlo simulation
-n_experiments = 100
+n_experiments = 200
 T = 20000
 q = 0.1
 n_forecasters = 3
 algorithms = ["RQR"]
 show_benchmarks = true
 lead_time = 1
-#missing_rates = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90]
-missing_rates = [0.05]
+missing_rates = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90]
+#missing_rates = [0.05]
 
 if show_benchmarks
     push!(algorithms, "mean_impute")
@@ -42,29 +42,39 @@ true_weights = nothing
 
 for missing_rate in missing_rates
 
+    # Set true_weights once from a single data draw (same for all experiments/missing rates)
+    if true_weights === nothing
+        _, _, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
+        global true_weights = w'
+    end
+
     Threads.@threads for i in ProgressBar(1:n_experiments)
 
         # Weights initialization
         weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
         for algo in algorithms
-            weights_history[algo][:, 1] .= initialize_weights(n_forecasters)
+            init_w = initialize_weights(n_forecasters)
+            weights_history[algo][:, 1] .= init_w
             for f in 1:n_forecasters
-                exp_weights[algo][f][i, 1] = initialize_weights(n_forecasters)[f]
+                exp_weights[algo][f][i, 1] = init_w[f]
             end
         end
-        
+
         # Data generation
         realizations, forecasters_preds, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
-        if i == 1
-            global true_weights = w'
-        end
-
         if "RQR" in algorithms
             alpha = Int.(rand(n_forecasters, T) .< missing_rate)
             D_exp = zeros(n_forecasters, n_forecasters)
+
+            for t in 1:T
+                if sum(alpha[:, t]) == length(alpha[:, t])
+                    idx = rand(1:length(alpha[:, t]))
+                    alpha[idx, t] = 0
+                end
+            end
         end
 
         # Learning process
@@ -72,16 +82,11 @@ for missing_rate in missing_rates
             forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
             y_true = realizations[t]
 
-            if sum(alpha[:, t]) == 3
-                idx = rand(1:n_forecasters)
-                alpha[idx, t] = 0
-            end
-            
             for algo in algorithms
                 if algo == "QR"
-                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q)
+                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.01, 0.2)
                 elseif algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
                     D_exp = new_D
                 end
 

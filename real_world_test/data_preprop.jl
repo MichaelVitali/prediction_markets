@@ -5,24 +5,26 @@ using Parquet2
 using Dates
 using Normalization
 using CSV
+using DataStructures
 
 export preprocessing_forecasts
 
-    function preprocessing_forecasts(model_paths::Dict{String, String}, q)
-
-        forecasters_dict = Dict{String, Vector{Vector{Float64}}}()
-        scalers = Dict{String, MinMax}()
+    function preprocessing_forecasts(model_paths, q)
+        forecasters_dict = OrderedDict{String, Vector{Vector{Float64}}}()
+        scalers = OrderedDict{String, MinMax}()
         true_values = []
+        dates = Date[]
 
         for name in keys(model_paths)
             forecasters_dict[name] = []
         end
 
         ######## Extract MODELS FORECASTS ########
-        col_sym = Symbol("q$(Int(q * 100))")        
+        col_sym = Symbol("q$(Int(q * 100))")   
         for (name, path) in model_paths
             df = DataFrame(Parquet2.Dataset(path))
             df = dropmissing(df)
+            df[!, col_sym] = max.(df[!, col_sym], 0)
 
             first_date = Date(first(df.datetime))
             last_date = Date(last(df.datetime)) - Day(1)
@@ -44,6 +46,7 @@ export preprocessing_forecasts
         ############ Extract True Values ############
         df_ecmwf = DataFrame(Parquet2.Dataset(model_paths["ecmwf_xgb"]))
         df_ecmwf = dropmissing(df_ecmwf)
+        df_ecmwf[!, :measured] = max.(df_ecmwf[!, :measured], 0)
 
         first_date = Date(first(df_ecmwf.datetime))
         last_date = Date(last(df_ecmwf.datetime)) - Day(1)
@@ -56,9 +59,10 @@ export preprocessing_forecasts
             daily_data = filter(row -> start_time <= row.datetime <= end_time, df_ecmwf)
             daily_data = daily_data[!, :measured]
             push!(true_values, daily_data)
+            push!(dates, day)
         end
 
-        return true_values, forecasters_dict, scalers, scaler_target
+        return true_values, forecasters_dict, scalers, scaler_target, dates
     end
 
 end

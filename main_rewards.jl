@@ -27,8 +27,8 @@ algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
 total_reward = 100
 T = 20000
-n_experiments = 20
-lead_time = 12
+n_experiments = 200
+lead_time = 1
 delta = 0.7
 environment = "invariant"
 
@@ -49,6 +49,7 @@ end
 
 #################### Quantile Regression ####################
 algo = "QR"
+data_lock = ReentrantLock()
 
 for q in quantiles
     quantile_step_reward = total_reward / length(quantiles)
@@ -81,7 +82,7 @@ for q in quantiles
             forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
             y_true = realizations[t]
 
-            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.2)
+            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.01, 0.2)
             temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
             forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
             temp_scores = 1 .- (forecasters_losses ./ sum(forecasters_losses))
@@ -93,13 +94,16 @@ for q in quantiles
             rewards_in_exp[:, t] = rewards_in
             rewards_out_exp[:, t] = rewards_out
             rewards_exp[:, t] = rewards_in .+ rewards_out
+
         end
 
-        payoffs[q][algo] += payoffs_exp
-        weights[q][algo] += weights_exp
-        rewards[q][algo] += rewards_exp
-        rewards_in_sample[q][algo] += rewards_in_exp
-        rewards_out_sample[q][algo] += rewards_out_exp
+        lock(data_lock) do
+            payoffs[q][algo] .+= payoffs_exp
+            weights[q][algo] .+= weights_exp
+            rewards[q][algo] .+= rewards_exp
+            rewards_in_sample[q][algo] .+= rewards_in_exp
+            rewards_out_sample[q][algo] .+= rewards_out_exp
+        end
     end
 end
 
@@ -109,10 +113,12 @@ for q in quantiles
     rewards[q][algo] = rewards[q][algo] ./ n_experiments
     rewards_in_sample[q][algo] = rewards_in_sample[q][algo] ./ n_experiments
     rewards_out_sample[q][algo] = rewards_out_sample[q][algo] ./ n_experiments
+
 end
 
 #################### Robust Quantile Regression ####################
 algo = "RQR"
+acc_lock_rqr = ReentrantLock()
 #missing_forecast = 2
 
 for q in quantiles
@@ -159,7 +165,7 @@ for q in quantiles
             y_true = realizations[t]
 
             # Learning Phase
-            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.2)
+            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
             prev_D = D_exp
             D_exp = new_D
 
@@ -167,6 +173,7 @@ for q in quantiles
             temp_forecasts_t = [forecasters_preds_t[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
             temp_weights_t = weights_exp[:, t-1] .+ prev_D * alpha[:, t]
             temp_weights_t = [temp_weights_t[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
+            temp_weights_t = project_to_simplex(temp_weights_t)
 
             temp_payoffs = nothing
             forecasters_losses = nothing
@@ -204,11 +211,13 @@ for q in quantiles
             rewards_exp[:, t] = rewards_in .+ rewards_out
         end
 
-        payoffs[q][algo] += payoffs_exp
-        weights[q][algo] += weights_exp
-        rewards[q][algo] += rewards_exp
-        rewards_in_sample[q][algo] += rewards_in_exp
-        rewards_out_sample[q][algo] += rewards_out_exp
+        lock(acc_lock_rqr) do
+            payoffs[q][algo] .+= payoffs_exp
+            weights[q][algo] .+= weights_exp
+            rewards[q][algo] .+= rewards_exp
+            rewards_in_sample[q][algo] .+= rewards_in_exp
+            rewards_out_sample[q][algo] .+= rewards_out_exp
+        end
     end
 end
 
