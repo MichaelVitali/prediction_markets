@@ -40,6 +40,10 @@ miss_variance = Dict([missing_rate => zeros((n_forecasters, T)) for missing_rate
 miss_biass = Dict([missing_rate => zeros((n_forecasters, T)) for missing_rate in missing_rates])
 true_weights = nothing
 
+cut_start = 5001
+my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
+x = 1:5000:(T - cut_start + 1)
+
 for missing_rate in missing_rates
 
     # Set true_weights once from a single data draw (same for all experiments/missing rates)
@@ -174,14 +178,12 @@ for missing_rate in missing_rates
     miss_biass[missing_rate] = biasses_mc["RQR"]
 
     # Plot Metrics
-    cut_start = 5001
     ## Plot biasses for all algorithms
     plot_biasses = plot(layout=(n_forecasters, 1), size=(1000, 300 * n_forecasters), legend=:topright)
     for f in 1:n_forecasters
         for algo in algorithms
             biass_w = biasses_mc[algo][f, cut_start:end]
             plot!(plot_biasses[f], 1:length(biass_w), biass_w, label="$(algo)",
-            xlabel="Time", 
             ylabel="Bias",
             legend=false,
             fg_legend=:transparent,
@@ -190,13 +192,14 @@ for missing_rate in missing_rates
             xlabelfontsize=14,
             bottom_margin=5mm,
             left_margin=5mm,
-            tickfontsize=10,
+            tickfontsize=12,
             lw=2,
             rotation=15,
-            formatter=:plain)
+            formatter=:plain,
+            xticks = (f == n_forecasters) ? (x, my_tick_formatter(x)) : (x, fill("", length(x))))
         end
-
-        plot!(plot_biasses,
+    end
+    plot!(plot_biasses,
         subplot=1,
         legend=(0.2, 1.1),
         legendfont=12,
@@ -204,7 +207,9 @@ for missing_rate in missing_rates
         fg_legend=:transparent,
         bg_legend=:transparent,
         top_margin=10mm)
-    end
+    plot!(plot_biasses[n_forecasters],
+        xlabel="Time [x10³]",
+        xlabelfontsize=14)
     display(plot_biasses)
     savefig(plot_biasses, "plots/metrics/plot_biasses_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
 
@@ -216,35 +221,35 @@ for missing_rate in missing_rates
             plot!(plot_variances[f], 1:length(var_w), var_w,
                 label=algo,
                 legend=false,
-                xlabel="Time", 
                 ylabel="Variance",
                 ylabelfontsize=14,
                 xlabelfontsize=14,
                 bottom_margin=5mm,
                 left_margin=5mm,
-                tickfontsize=10,
+                tickfontsize=12,
                 lw=2,
                 rotation=15,
-                formatter=:plain)
+                formatter=:plain,
+                xticks = (f == n_forecasters) ? (x, my_tick_formatter(x)) : (x, fill("", length(x))))
         end
-        plot!(plot_variances[1],
-            subplot=1,
-            legend=(0.2, 1.1),
-            legendfont=12,
-            legendcolumns=3,
-            fg_legend=:transparent,
-            bg_legend=:transparent,
-            top_margin=10mm,
-        )
     end
+    plot!(plot_variances[1],
+        subplot=1,
+        legend=(0.2, 1.1),
+        legendfont=12,
+        legendcolumns=3,
+        fg_legend=:transparent,
+        bg_legend=:transparent,
+        top_margin=10mm,
+    )
+    plot!(plot_variances[n_forecasters],
+        xlabel="Time [x10³]",
+        xlabelfontsize=14)
     display(plot_variances)
     savefig(plot_variances, "plots/metrics/plot_variances_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
 end
 
 # Plot variance and biass for different missing rates
-cut_start = 5001
-my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
-x = 1:5000:(T-cut_start+1)
 plot_missingness_var = plot(layout=(n_forecasters, 1), size=(1000, 900))
 for i in 1:n_forecasters
     for missing_rate in missing_rates
@@ -256,12 +261,12 @@ for i in 1:n_forecasters
             xlabelfontsize=14,
             bottom_margin=5mm,
             left_margin=5mm,
-            tickfontsize=10,
+            tickfontsize=12,
             lw=2,
             formatter=:plain,
-            xticks=(x, my_tick_formatter(x)),
+            xticks = (i == n_forecasters) ? (x, my_tick_formatter(x)) : (x, fill("", length(x))),
         )
-        ylabel!(plot_missingness_var[i], "W$i")
+        ylabel!(plot_missingness_var[i], "W$i [p.u.]")
     end
 end
 plot!(plot_missingness_var,
@@ -276,7 +281,7 @@ plot!(plot_missingness_var,
 plot!(
     plot_missingness_var[1],
     subplot=3,
-    xlabel="Time (10\u00b3)",
+    xlabel="Time [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_missingness_var)
@@ -286,28 +291,28 @@ plot_missingness_bias = plot(layout=(n_forecasters, 1), size=(1000, 900))
 for i in 1:n_forecasters
     for missing_rate in missing_rates
         temp_bias = miss_biass[missing_rate][i, cut_start:end]
-        plot!(plot_missingness_bias[i], 1:length(temp_bias), temp_bias, 
+        plot!(plot_missingness_bias[i], 1:length(temp_bias), temp_bias,
             label=missing_rate,
             ylabel="Bias",
             legend=false,
             fg_legend=:transparent,
             bg_legend=:transparent,
-            ylabelfontsize=14,
-            xlabelfontsize=14,
+            ylabelfontsize=16,
+            xlabelfontsize=16,
             bottom_margin=5mm,
             left_margin=5mm,
-            tickfontsize=10,
+            tickfontsize=14,
             lw=2,
             formatter=:plain,
-            xticks=(x, my_tick_formatter(x)),
+            xticks = (i == n_forecasters) ? (x, my_tick_formatter(x)) : (x, fill("", length(x))),
         )
-        ylabel!(plot_missingness_bias[i], "W$i")
+        ylabel!(plot_missingness_bias[i], "W$i [p.u.]")
     end
 end
 plot!(plot_missingness_bias[1],
     subplot=1,
     legend=(0.17, 1.1),
-    legendfont=12,
+    legendfont=14,
     legendcolumns=6,
     fg_legend=:transparent,
     bg_legend=:transparent,
@@ -316,8 +321,8 @@ plot!(plot_missingness_bias[1],
 plot!(
     plot_missingness_bias,
     subplot=3,
-    xlabel="Time (10\u00b3)",
-    xlabelfontsize=14
+    xlabel="Time [x10\u00b3]",
+    xlabelfontsize=16
 )
 display(plot_missingness_bias)
 savefig(plot_missingness_bias, "plots/metrics/plot_missingness_biasses_$(lead_time)lt_q$(Int(q*100)).pdf")

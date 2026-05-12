@@ -403,26 +403,35 @@ function make_loss_plot(avg_ts_qr, avg_ts_rqr, global_loss_models, model_name, w
     relayout!(p,
         height = 1200,
         width  = 1800,
+        paper_bgcolor = "white",
+        plot_bgcolor = "white",
+        xaxis_gridcolor = "lightgray", xaxis_linecolor = "black",
+        xaxis2_gridcolor = "lightgray", xaxis2_linecolor = "black",
+        yaxis_gridcolor = "lightgray", yaxis_linecolor = "black",
+        yaxis2_gridcolor = "lightgray", yaxis2_linecolor = "black",
         xaxis2_tickformat = "%b",
-        xaxis2_tickfont = attr(size=14),
-        xaxis2_title = attr(text="Time Step", font=attr(size=18)),
+        xaxis2_tickfont = attr(size=16),
+        xaxis_tickfont = attr(size=16),
+        yaxis_tickfont = attr(size=16),
+        yaxis2_tickfont = attr(size=16),
+        xaxis2_title = attr(text="Time [15min]", font=attr(size=18)),
         hovermode = "x unified",
         legend = attr(
             orientation = "h",
             yanchor = "top",
-            y = -0.13,
+            y = -0.20,
             xanchor = "center",
             x = 0.5,
             font = attr(size = 16)
         ),
-        margin = attr(l=55, r=10, t=40, b=100)
+        margin = attr(l=75, r=10, t=40, b=120)
     )
 
     # Adding shared ylabel annotation
     existing_annotations = p.plot.layout[:annotations]
     ylabel_annotation = attr(
-        text = "Avg Quantile Loss",
-        x = -0.07,
+        text = "Avg Quantile Loss [MW]",
+        x = -0.10,
         xref = "paper",
         y = 0.5,
         yref = "paper",
@@ -480,9 +489,17 @@ end
 # 3. Configure the Global Layout and Legend
 total_height = 500 * n_rows 
 layout_updates = Dict{Symbol, Any}(
-    :height => total_height, 
+    :height => total_height,
     :width => 1200,
-    
+    :paper_bgcolor => "white",
+    :plot_bgcolor => "white",
+    :xaxis_gridcolor => "lightgray", :xaxis_linecolor => "black",
+    :xaxis2_gridcolor => "lightgray", :xaxis2_linecolor => "black",
+    :xaxis3_gridcolor => "lightgray", :xaxis3_linecolor => "black",
+    :yaxis_gridcolor => "lightgray", :yaxis_linecolor => "black",
+    :yaxis2_gridcolor => "lightgray", :yaxis2_linecolor => "black",
+    :yaxis3_gridcolor => "lightgray", :yaxis3_linecolor => "black",
+
     # LEGEND CONFIGURATION
     :legend => attr(
         orientation = "h",      
@@ -501,16 +518,19 @@ layout_updates = Dict{Symbol, Any}(
 # Set X-axis label on the very last subplot
 last_xaxis_name = (n_rows == 1) ? "xaxis" : "xaxis$(n_rows)"
 layout_updates[Symbol("$(last_xaxis_name)_tickformat")] = "%b"
-layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Time Step", font=attr(size=18))
+layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Time [15min]", font=attr(size=18))
 layout_updates[Symbol("$(last_xaxis_name)_title_standoff")] = 20
-layout_updates[Symbol("$(last_xaxis_name)_tickfont")] = attr(size=14)
+layout_updates[Symbol("$(last_xaxis_name)_tickfont")] = attr(size=16)
+layout_updates[:yaxis_tickfont]  = attr(size=16)
+layout_updates[:yaxis2_tickfont] = attr(size=16)
+layout_updates[:yaxis3_tickfont] = attr(size=16)
 
 relayout!(p_weights_combined, layout_updates)
 
 # Add shared y-label annotation separately — preserve existing subplot annotations
 existing_annotations = p_weights_combined.plot.layout[:annotations]
 ylabel_annotation = attr(
-    text = "Weights",
+    text = "Weights [p.u.]",
     x = -0.07,
     xref = "paper",
     y = 0.5,
@@ -586,25 +606,34 @@ function make_reward_plot(model_rewards, window, dates)
     relayout!(p,
         height = 1200,
         width  = 1800,
+        paper_bgcolor = "white",
+        plot_bgcolor = "white",
+        xaxis_gridcolor = "lightgray", xaxis_linecolor = "black",
+        xaxis2_gridcolor = "lightgray", xaxis2_linecolor = "black",
+        yaxis_gridcolor = "lightgray", yaxis_linecolor = "black",
+        yaxis2_gridcolor = "lightgray", yaxis2_linecolor = "black",
         xaxis2_tickformat = "%b",
-        xaxis2_tickfont = attr(size=14),
-        xaxis2_title = attr(text="Time Step", font=attr(size=18)),
+        xaxis2_tickfont = attr(size=16),
+        xaxis_tickfont = attr(size=16),
+        yaxis_tickfont = attr(size=16),
+        yaxis2_tickfont = attr(size=16),
+        xaxis2_title = attr(text="Time [15min]", font=attr(size=18)),
         hovermode = "x unified",
         legend = attr(
             orientation = "h",
             yanchor = "top",
-            y = -0.13,
+            y = -0.20,
             xanchor = "center",
             x = 0.5,
             font = attr(size = 14)
         ),
-        margin = attr(l=55, r=10, t=40, b=100)
+        margin = attr(l=55, r=10, t=40, b=120)
     )
 
     # Adding shared ylabel
     existing_annotations = p.plot.layout[:annotations]
     ylabel_annotation = attr(
-        text = "Rewards (£)",
+        text = "Rewards [£]",
         x = -0.07,
         xref = "paper",
         y = 0.5,

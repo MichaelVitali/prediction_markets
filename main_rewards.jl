@@ -248,10 +248,20 @@ my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
 x = 1:5000:T
 
 # Plot total rewards for each algorithm
-plot_rewards = plot(layout=(length(algorithms), 1), size=(800, 500))
+l = @layout [a{0.03w} [b; c]]
+plot_rewards = plot(layout=l, size=(800, 500))
+
+plot!(plot_rewards[1],
+    framestyle=:none, ticks=nothing, grid=false,
+    xlims=(0, 1), ylims=(0, 1),
+    annotations=[(0.5, 0.5, text("Total reward [£]", 14, :center, rotation=90))],
+    left_margin=0mm, right_margin=0mm,
+    bottom_margin=0mm, top_margin=0mm
+)
+
 for (i, algo) in enumerate(algorithms)
-    plot!(plot_rewards[i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-    ylabel="Total reward (£)",
+    plot!(plot_rewards[i+1], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    ylabel="",
     legend=false,
     fg_legend=:transparent,
     bg_legend=:transparent,
@@ -260,12 +270,11 @@ for (i, algo) in enumerate(algorithms)
     bottom_margin=2mm,
     left_margin=5mm,
     tickfontsize=12,
-    xticks=(x, my_tick_formatter(x)),
+    xticks=(i == length(algorithms)) ? (x, my_tick_formatter(x)) : (x, fill("", length(x))),
     lw=2
     )
 end
-plot!(plot_rewards, 
-      subplot=1,
+plot!(plot_rewards[2], 
       legend=(0.2, 1.15),
       legendfont=12,
       legendcolumns=3,
@@ -273,9 +282,8 @@ plot!(plot_rewards,
       bg_legend=:transparent,
       top_margin=10mm)
 plot!(
-    plot_rewards,
-    subplot=2,
-    xlabel="Time (10\u00b3)",
+    plot_rewards[3],
+    xlabel="Time [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_rewards)
@@ -287,7 +295,7 @@ plot_in_out_rewards = plot(layout=(2, length(algorithms)), size=(1000, 700))
 for (i, algo) in enumerate(algorithms)
     plot!(plot_in_out_rewards[1, i], 1:T, total_in_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Time", 
-    ylabel="in-sample reward (£)",
+    ylabel="in-sample reward [£]",
     legend=false,
     fg_legend=:transparent,
     bg_legend=:transparent,
@@ -302,7 +310,7 @@ for (i, algo) in enumerate(algorithms)
 
     plot!(plot_in_out_rewards[2, i], 1:T, total_out_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Time", 
-    ylabel="out-of-sample reward (£)",
+    ylabel="out-of-sample reward [£]",
     legend=false,
     fg_legend=:transparent,
     bg_legend=:transparent,
@@ -325,7 +333,7 @@ for (i, algo) in enumerate(algorithms)
         
         plot!(plot_reward_quantiles[j, i], 1:T, rewards[q][algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
-        ylabel="Total reward (£)",
+        ylabel="Total reward [£]",
         legend=false,
         fg_legend=:transparent,
         bg_legend=:transparent,
@@ -355,7 +363,7 @@ for (i, algo) in enumerate(algorithms)
 
     plot!(plot_insta_cum_reward[1, i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
-        ylabel="Instantaneous reward (£)",
+        ylabel="Instantaneous reward [£]",
         legend=false,
         fg_legend=:transparent,
         bg_legend=:transparent,
@@ -371,7 +379,7 @@ for (i, algo) in enumerate(algorithms)
     
     plot!(plot_insta_cum_reward[2, i], 1:T, cumsum(total_rewards_forecasters[algo], dims=2)', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
-        ylabel="Cumulative reward (£)",
+        ylabel="Cumulative reward [£]",
         legend=false,
         fg_legend=:transparent,
         bg_legend=:transparent,

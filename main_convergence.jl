@@ -109,7 +109,7 @@ plot_weigths = plot(layout=(length(quantiles), length(algorithms)), size=(2200, 
 for (i, q) in enumerate(quantiles)
     for (j, algo) in enumerate(algorithms)
         plot!(plot_weigths[i, j], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
-        ylabel="Weights",
+        ylabel = (i == 2) ? "Weights [p.u.]" : "",
         legend=:topright,
         legendfont=:20,
         fg_legend=:transparent,
@@ -120,19 +120,20 @@ for (i, q) in enumerate(quantiles)
         left_margin=15mm,
         tickfontsize=16,
         lw=2,
-        xticks=(x, my_tick_formatter(x))
+        framestyle=:arrows,
+        xticks = (i == length(quantiles)) ? (x, my_tick_formatter(x)) : (x, fill("", length(x)))
         )
         plot!(plot_weigths[i, j], 1:T, true_weights[q]', label=["" "" ""])
     end
 end
 plot!(
     plot_weigths[3, 1],
-    xlabel="Time (10\u00b3)",
+    xlabel="Time [x10\u00b3]",
     xlabelfontsize=14
 )
     plot!(
     plot_weigths[3, 2],
-    xlabel="Time (10\u00b3)",
+    xlabel="Time [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_weigths)
@@ -140,10 +141,21 @@ savefig(plot_weigths, "plots/convergence/plot_weight_$(environment)_1lt_all_q.pd
 
 # Plot weight for each quantile and algorithm
 for q in quantiles
-    plot_weights_q = plot(layout=(length(algorithms), 1), size=[800, 500])
+    # Thin left strip (subplot 1) acts as a shared y-label centered across both rows
+    l = @layout [a{0.03w} [b; c]]
+    plot_weights_q = plot(layout=l, size=[830, 500])
+
+    plot!(plot_weights_q[1],
+        framestyle=:none, ticks=nothing, grid=false,
+        xlims=(0, 1), ylims=(0, 1),
+        annotations=[(0.5, 0.5, text("Weights [p.u.]", 14, :center, rotation=90))],
+        left_margin=0mm, right_margin=0mm,
+        bottom_margin=0mm, top_margin=0mm
+    )
+
     for (j, algo) in enumerate(algorithms)
-        plot!(plot_weights_q[j], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-        ylabel="Weights",
+        plot!(plot_weights_q[j+1], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
+        ylabel="",
         legend=false,
         legendfont=:12,
         fg_legend=:transparent,
@@ -153,11 +165,12 @@ for q in quantiles
         left_margin=5mm,
         tickfontsize=12,
         lw=2,
-        xticks=(x, my_tick_formatter(x))
+        framestyle=:arrows,
+        xticks = (j == length(algorithms)) ? (x, my_tick_formatter(x)) : (x, fill("", length(x)))
         )
-        plot!(plot_weights_q[j], 1:T, true_weights[q]', label=["" "" ""])
+        plot!(plot_weights_q[j+1], 1:T, true_weights[q]', label=["" "" ""])
     end
-    plot!(plot_weights_q[1, 1],
+    plot!(plot_weights_q[2],
       legend=(0.2, 1.15),
       legendfont=12,
       legendcolumns=3,
@@ -165,8 +178,8 @@ for q in quantiles
       bg_legend=:transparent,
       top_margin=10mm)
     plot!(
-        plot_weights_q[2, 1],
-        xlabel="Time (10\u00b3)",
+        plot_weights_q[3],
+        xlabel="Time [x10\u00b3]",
         xlabelfontsize=14
     )
     display(plot_weights_q)
