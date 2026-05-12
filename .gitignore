@@ -4,3 +4,8 @@
 *.csv
 *.json
 plots/
+*.pyc
+model_pts/
+model_dicts/
+forecasting_models/
+real_world_test/data/
