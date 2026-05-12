@@ -5,7 +5,15 @@
 *.json
 plots/
 *.pyc
+__pycache__/
 model_pts/
 model_dicts/
 forecasting_models/
 real_world_test/data/
+old_implementations/
+.DS_Store
+.cache.sqlite
+*.ipynb
+download_dwd_data.py
+main_train_models.py
+real_world_test/main_plot_single_day.jl
