@@ -247,6 +247,14 @@ end
 my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
 x = 1:5000:T
 
+# Shared, data-driven y-limits so panels of each figure use identical y-ticks.
+# Instantaneous and cumulative rewards live on different scales, so they keep separate ranges.
+ylims_total = padded_ylims(values(total_rewards_forecasters)...)
+ylims_in    = padded_ylims(values(total_in_rewards_forecasters)...)
+ylims_out   = padded_ylims(values(total_out_rewards_forecasters)...)
+ylims_rq    = padded_ylims([rewards[q][algo] for q in quantiles for algo in algorithms]...)
+ylims_cum   = padded_ylims([cumsum(total_rewards_forecasters[algo], dims=2) for algo in algorithms]...)
+
 # Plot total rewards for each algorithm
 l = @layout [a{0.03w} [b; c]]
 plot_rewards = plot(layout=l, size=(800, 500))
@@ -262,6 +270,7 @@ plot!(plot_rewards[1],
 for (i, algo) in enumerate(algorithms)
     plot!(plot_rewards[i+1], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     ylabel="",
+    ylims=ylims_total,
     legend=false,
     fg_legend=:transparent,
     bg_legend=:transparent,
@@ -295,6 +304,7 @@ plot_in_out_rewards = plot(layout=(2, length(algorithms)), size=(1000, 700))
 for (i, algo) in enumerate(algorithms)
     plot!(plot_in_out_rewards[1, i], 1:T, total_in_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Time", 
+    ylims=ylims_in,
     ylabel="in-sample reward [£]",
     legend=false,
     fg_legend=:transparent,
@@ -310,6 +320,7 @@ for (i, algo) in enumerate(algorithms)
 
     plot!(plot_in_out_rewards[2, i], 1:T, total_out_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Time", 
+    ylims=ylims_out,
     ylabel="out-of-sample reward [£]",
     legend=false,
     fg_legend=:transparent,
@@ -333,6 +344,7 @@ for (i, algo) in enumerate(algorithms)
         
         plot!(plot_reward_quantiles[j, i], 1:T, rewards[q][algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
+        ylims=ylims_rq,
         ylabel="Total reward [£]",
         legend=false,
         fg_legend=:transparent,
@@ -363,6 +375,7 @@ for (i, algo) in enumerate(algorithms)
 
     plot!(plot_insta_cum_reward[1, i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
+        ylims=ylims_total,
         ylabel="Instantaneous reward [£]",
         legend=false,
         fg_legend=:transparent,
@@ -379,6 +392,7 @@ for (i, algo) in enumerate(algorithms)
     
     plot!(plot_insta_cum_reward[2, i], 1:T, cumsum(total_rewards_forecasters[algo], dims=2)', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Time", 
+        ylims=ylims_cum,
         ylabel="Cumulative reward [£]",
         legend=false,
         fg_legend=:transparent,

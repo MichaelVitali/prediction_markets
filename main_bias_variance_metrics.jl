@@ -179,11 +179,13 @@ for missing_rate in missing_rates
 
     # Plot Metrics
     ## Plot biasses for all algorithms
+    ylims_bias = padded_ylims([biasses_mc[algo][:, cut_start:end] for algo in algorithms]...)
     plot_biasses = plot(layout=(n_forecasters, 1), size=(1000, 300 * n_forecasters), legend=:topright)
     for f in 1:n_forecasters
         for algo in algorithms
             biass_w = biasses_mc[algo][f, cut_start:end]
             plot!(plot_biasses[f], 1:length(biass_w), biass_w, label="$(algo)",
+            ylims=ylims_bias,
             ylabel="Bias",
             legend=false,
             fg_legend=:transparent,
@@ -214,12 +216,14 @@ for missing_rate in missing_rates
     savefig(plot_biasses, "plots/metrics/plot_biasses_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
 
     ## Plot variances for all algorithms
+    ylims_var = padded_ylims([variances_mc[algo][:, cut_start:end] for algo in algorithms]...)
     plot_variances = plot(layout=(n_forecasters, 1), size=(1000, 300 * n_forecasters))
     for f in 1:n_forecasters
         for algo in algorithms
             var_w = variances_mc[algo][f, cut_start:end]
             plot!(plot_variances[f], 1:length(var_w), var_w,
                 label=algo,
+                ylims=ylims_var,
                 legend=false,
                 ylabel="Variance",
                 ylabelfontsize=14,
@@ -250,11 +254,13 @@ for missing_rate in missing_rates
 end
 
 # Plot variance and biass for different missing rates
+ylims_mvar = padded_ylims([miss_variance[mr][:, cut_start:end] for mr in missing_rates]...)
 plot_missingness_var = plot(layout=(n_forecasters, 1), size=(1000, 900))
 for i in 1:n_forecasters
     for missing_rate in missing_rates
         temp_var = miss_variance[missing_rate][i, cut_start:end]
         plot!(plot_missingness_var[i], 1:length(temp_var), temp_var, label=missing_rate,
+            ylims=ylims_mvar,
             legend=false,
             ylabel="Variance",
             ylabelfontsize=14,
@@ -287,12 +293,14 @@ plot!(
 display(plot_missingness_var)
 savefig(plot_missingness_var, "plots/metrics/plot_missingness_variances_$(lead_time)lt_q$(Int(q*100)).pdf")
 
+ylims_mbias = padded_ylims([miss_biass[mr][:, cut_start:end] for mr in missing_rates]...)
 plot_missingness_bias = plot(layout=(n_forecasters, 1), size=(1000, 900))
 for i in 1:n_forecasters
     for missing_rate in missing_rates
         temp_bias = miss_biass[missing_rate][i, cut_start:end]
         plot!(plot_missingness_bias[i], 1:length(temp_bias), temp_bias,
             label=missing_rate,
+            ylims=ylims_mbias,
             ylabel="Bias",
             legend=false,
             fg_legend=:transparent,

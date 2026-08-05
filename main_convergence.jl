@@ -22,7 +22,7 @@ lead_time = 1
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
-environment = "invariant"
+environment = "variant"
 
 # Environment Variables
 exp_weights = Dict([q => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for q in quantiles])
@@ -104,11 +104,18 @@ end
 my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
 x = 1:5000:T
 
+# Shared y-limits for every weight panel (all quantiles, algorithms and per-quantile figures)
+ylims_w = padded_ylims(
+    [exp_weights[q][algo] for q in quantiles for algo in algorithms]...,
+    [true_weights[q] for q in quantiles]...
+)
+
 plot_weigths = plot(layout=(length(quantiles), length(algorithms)), size=(2200, 1700))
 
 for (i, q) in enumerate(quantiles)
     for (j, algo) in enumerate(algorithms)
         plot!(plot_weigths[i, j], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
+        ylims=ylims_w,
         ylabel = (i == 2) ? "Weights [p.u.]" : "",
         legend=:topright,
         legendfont=:20,
@@ -155,6 +162,7 @@ for q in quantiles
 
     for (j, algo) in enumerate(algorithms)
         plot!(plot_weights_q[j+1], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
+        ylims=ylims_w,
         ylabel="",
         legend=false,
         legendfont=:12,

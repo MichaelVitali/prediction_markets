@@ -40,16 +40,17 @@ burn_in_period = 60
 root_dir = @__DIR__
 plot_dir = joinpath(root_dir, "plots")
 mkpath(plot_dir)
+
 models_paths = OrderedDict(
-    "ecmwf_nn" => joinpath(root_dir, "saved_models", "predictions_nn_ecmwf_ifs.parquet"),
-    "noaa_nn" => joinpath(root_dir, "saved_models", "predictions_nn_noaa_gfs.parquet"),
-    "dwd_nn" => joinpath(root_dir, "saved_models", "predictions_nn_dwd_icon_eu.parquet"),
-    "ecmwf_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_ecmwf_ifs.parquet"),
-    "noaa_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_noaa_gfs.parquet"),
-    "dwd_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_dwd_icon_eu.parquet"),
     "ecmwf_qrf" => joinpath(root_dir, "saved_models", "predictions_qrf_ecmwf_ifs.parquet"),
+    "ecmwf_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_ecmwf_ifs.parquet"),
+    "ecmwf_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_ecmwf_ifs.parquet"),
     "noaa_qrf" => joinpath(root_dir, "saved_models", "predictions_qrf_noaa_gfs.parquet"),
+    "noaa_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_noaa_gfs.parquet"),
+    "noaa_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_noaa_gfs.parquet"),
     "dwd_qrf" => joinpath(root_dir, "saved_models", "predictions_qrf_dwd_icon_eu.parquet"),
+    "dwd_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_dwd_icon_eu.parquet"),
+    "dwd_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_dwd_icon_eu.parquet"),
 )
 model_names = collect(keys(models_paths))
 n_forecasters = length(model_names)
@@ -315,17 +316,26 @@ for q in quantiles
 end
 
 ########### Plots Settings ##############
+# Colors kept per model; ordering matches Table II (ECMWF, NOAA, DWD -> QRF, MLP, XGB).
 model_colors_dict = Dict(
-    "ecmwf_nn" => "green",
-    "noaa_nn" => "orange",
-    "dwd_nn" => "purple",
-    "ecmwf_xgb" => "cyan",
-    "noaa_xgb" => "magenta",
-    "dwd_xgb" => "gold",
     "ecmwf_qrf" => "lime",
+    "ecmwf_mlp" => "green",
+    "ecmwf_xgb" => "cyan",
     "noaa_qrf" => "navy",
-    "dwd_qrf" => "brown"
+    "noaa_mlp" => "orange",
+    "noaa_xgb" => "magenta",
+    "dwd_qrf" => "brown",
+    "dwd_mlp" => "purple",
+    "dwd_xgb" => "gold"
 )
+
+# Line style distinguishes provider without relying only on color.
+model_dash_dict = Dict(
+    "ecmwf" => "solid",
+    "noaa" => "dash",
+    "dwd" => "dot"
+)
+get_dash(name) = get(model_dash_dict, String(split(name, "_")[1]), "solid")
 
 window = 7
 model_name = "ecmwf_xgb"
@@ -399,6 +409,10 @@ function make_loss_plot(avg_ts_qr, avg_ts_rqr, global_loss_models, model_name, w
     # Add Instantaneous (Row 2)
     add_loss_traces!(p, identity, 2)
 
+    # Shared y-limits so both panels use identical y-ticks (instantaneous drives the span)
+    model_series = haskey(global_loss_models, model_name) ? global_loss_models[model_name] : Float64[]
+    yl = collect(padded_ylims(avg_ts_qr, avg_ts_rqr, model_series))
+
     # Layout matched exactly to the reward plot
     relayout!(p,
         height = 1200,
@@ -409,6 +423,7 @@ function make_loss_plot(avg_ts_qr, avg_ts_rqr, global_loss_models, model_name, w
         xaxis2_gridcolor = "lightgray", xaxis2_linecolor = "black",
         yaxis_gridcolor = "lightgray", yaxis_linecolor = "black",
         yaxis2_gridcolor = "lightgray", yaxis2_linecolor = "black",
+        yaxis_range = yl, yaxis2_range = yl,
         xaxis2_tickformat = "%b",
         xaxis2_tickfont = attr(size=16),
         xaxis_tickfont = attr(size=16),
@@ -477,7 +492,7 @@ for (r, q) in enumerate(quantiles)
             y = moving_avg(weights[q]["RQR"][i, (burn_in_period+1):T], window),
             name = uppercase(name),
             mode = "lines",
-            line = attr(width=1.5, color=color), # Slightly thicker for visibility
+            line = attr(width=1.5, color=color, dash=get_dash(name)), # Slightly thicker for visibility
             legendgroup = name,
             showlegend = show_leg
         )
@@ -486,8 +501,13 @@ for (r, q) in enumerate(quantiles)
     end
 end
 
+# Shared y-limits across all quantile panels (same y-ticks for every subplot)
+ylims_weights = collect(padded_ylims(
+    [moving_avg(weights[q]["RQR"][i, (burn_in_period+1):T], window) for q in quantiles for i in 1:n_forecasters]...
+))
+
 # 3. Configure the Global Layout and Legend
-total_height = 500 * n_rows 
+total_height = 500 * n_rows
 layout_updates = Dict{Symbol, Any}(
     :height => total_height,
     :width => 1200,
@@ -524,6 +544,12 @@ layout_updates[Symbol("$(last_xaxis_name)_tickfont")] = attr(size=16)
 layout_updates[:yaxis_tickfont]  = attr(size=16)
 layout_updates[:yaxis2_tickfont] = attr(size=16)
 layout_updates[:yaxis3_tickfont] = attr(size=16)
+
+# Apply the shared y-range to every quantile panel
+for r in 1:n_rows
+    ax = r == 1 ? "yaxis" : "yaxis$(r)"
+    layout_updates[Symbol("$(ax)_range")] = ylims_weights
+end
 
 relayout!(p_weights_combined, layout_updates)
 
@@ -570,7 +596,7 @@ end
 model_rewards_qr  = OrderedDict(model_names[i] => total_rewards_forecasters["QR"][i,  (burn_in_period+1):T] for i in 1:n_forecasters)
 model_rewards_rqr = OrderedDict(model_names[i] => total_rewards_forecasters["RQR"][i, (burn_in_period+1):T] for i in 1:n_forecasters)
 
-function make_reward_plot(model_rewards, window, dates)
+function make_reward_plot(model_rewards, window, dates, y_range)
     p = make_subplots(
         rows = 2,
         cols = 1,
@@ -592,7 +618,7 @@ function make_reward_plot(model_rewards, window, dates)
                 x = dates,
                 y = transform_fn(model_rewards[name]),
                 name = uppercase(name),
-                line = attr(color=color, width=1.5),
+                line = attr(color=color, width=1.5, dash=get_dash(name)),
                 opacity = 0.8,
                 legendgroup = name,
                 showlegend = show_legend
@@ -612,6 +638,7 @@ function make_reward_plot(model_rewards, window, dates)
         xaxis2_gridcolor = "lightgray", xaxis2_linecolor = "black",
         yaxis_gridcolor = "lightgray", yaxis_linecolor = "black",
         yaxis2_gridcolor = "lightgray", yaxis2_linecolor = "black",
+        yaxis_range = y_range, yaxis2_range = y_range,
         xaxis2_tickformat = "%b",
         xaxis2_tickfont = attr(size=16),
         xaxis_tickfont = attr(size=16),
@@ -650,8 +677,11 @@ function make_reward_plot(model_rewards, window, dates)
     return p
 end
 
-p_reward_qr  = make_reward_plot(model_rewards_qr,  window, dates[(burn_in_period+1):T])
-p_reward_rqr = make_reward_plot(model_rewards_rqr, window, dates[(burn_in_period+1):T])
+# Shared y-range across both reward figures (QR and RQR) so they are directly comparable
+ylims_reward = collect(padded_ylims(values(model_rewards_qr)..., values(model_rewards_rqr)...))
+
+p_reward_qr  = make_reward_plot(model_rewards_qr,  window, dates[(burn_in_period+1):T], ylims_reward)
+p_reward_rqr = make_reward_plot(model_rewards_rqr, window, dates[(burn_in_period+1):T], ylims_reward)
 
 savefig(p_reward_qr,  joinpath(plot_dir, "reward_analysis_qr.pdf"))
 savefig(p_reward_rqr, joinpath(plot_dir, "reward_analysis_rqr.pdf"))

@@ -6,7 +6,31 @@ using LinearAlgebra
 using DataFrames
 using LossFunctions
 
-export  quantile_loss_gradient, initialize_weights, project_to_simplex, quantile_loss
+export  quantile_loss_gradient, initialize_weights, project_to_simplex, quantile_loss, padded_ylims
+
+    """
+        padded_ylims(arrays...; pad_frac=0.05)
+
+    Return a shared `(lo, hi)` y-axis range covering every finite value in the
+    given arrays (vectors or matrices), expanded by `pad_frac` of the span on
+    each side. Use it to give all panels of a figure (and comparable figures)
+    identical y-limits so they are directly comparable.
+    """
+    function padded_ylims(arrays...; pad_frac=0.05)
+        vals = Float64[]
+        for a in arrays
+            append!(vals, vec(Float64.(collect(a))))
+        end
+        filter!(isfinite, vals)
+        isempty(vals) && return (0.0, 1.0)
+        lo, hi = minimum(vals), maximum(vals)
+        if hi == lo
+            pad = hi == 0 ? 1.0 : abs(hi) * pad_frac
+            return (lo - pad, hi + pad)
+        end
+        pad = (hi - lo) * pad_frac
+        return (lo - pad, hi + pad)
+    end
 
     function quantile_loss(y_true, y_hat, q)
         error = y_true - y_hat

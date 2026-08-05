@@ -30,9 +30,9 @@ batch_percentages = [0.05, 0.1, 0.2, 0.5, 1.0]
 
 root_dir = @__DIR__
 models_paths = OrderedDict(
-    "ecmwf_nn" => joinpath(root_dir, "saved_models", "predictions_nn_ecmwf_ifs.parquet"),
-    "noaa_nn" => joinpath(root_dir, "saved_models", "predictions_nn_noaa_gfs.parquet"),
-    "dwd_nn" => joinpath(root_dir, "saved_models", "predictions_nn_dwd_icon_eu.parquet"),
+    "ecmwf_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_ecmwf_ifs.parquet"),
+    "noaa_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_noaa_gfs.parquet"),
+    "dwd_mlp" => joinpath(root_dir, "saved_models", "predictions_nn_dwd_icon_eu.parquet"),
     "ecmwf_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_ecmwf_ifs.parquet"),
     "noaa_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_noaa_gfs.parquet"),
     "dwd_xgb" => joinpath(root_dir, "saved_models", "predictions_xgb_dwd_icon_eu.parquet"),
