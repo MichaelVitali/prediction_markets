@@ -83,7 +83,7 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
         return weights, D, agg_quantile_t
     end
 
-    function online_adaptive_robust_quantile_regression_multiple_lead_times_trial(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5)
+    function online_adaptive_robust_quantile_regression_multiple_lead_times_trial(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5, D_radius=1.0)
 
         """
             Function calculates the update step for the adaptive robust quantile regression method. This function works for multiple lead times.
@@ -123,20 +123,26 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
                 # Calculate individual gradients
                 grad_w_t = (1 .- alpha) .* preds_t .* gradient_loss_t
                 grad_D_t = grad_w_t * alpha'
-                
+
                 # Add to batch accumulators
                 batch_grad_w .+= grad_w_t
                 batch_grad_D .+= grad_D_t
             end
-            
+
             # Average the gradients over the batch to maintain a stable learning rate
             batch_grad_w ./= current_batch_size
             batch_grad_D ./= current_batch_size
-            
+
             # Update weights and matrix ONCE per batch
             weights = weights .- learning_rate .* batch_grad_w
             weights = project_to_simplex(weights)
             D = D .- learning_rate .* batch_grad_D
+            # Project D onto a Frobenius-norm ball so the robust correction stays bounded
+            # (mirrors the simplex projection of the weights) and can't drift at higher lr.
+            nD = norm(D)
+            if nD > D_radius
+                D = D .* (D_radius / nD)
+            end
         end
 
         return weights, D, agg_quantile_t
