@@ -4,6 +4,7 @@ using Statistics
 using DataStructures
 using Base.Threads
 using LossFunctions
+using Normalization
 using ProgressBars
 using Plots.PlotMeasures
 
@@ -27,10 +28,19 @@ algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
 total_reward = 100
 T = 20000
-n_experiments = 200
+n_experiments = 100
 lead_time = 1
 delta = 0.7
 environment = "invariant"
+lr = 0.1   # shared learning rate for all algorithms (QR and RQR)
+
+# Data bounds for normalization. Synthetic data is Gaussian (unbounded), so we impose a
+# fixed a-priori box covering the generating distributions (forecaster means ~0..2, sd ~1).
+# A single MinMax scaler (as in the real-world data_preprop.jl) maps all data to [0,1],
+# which bounds the pinball loss by max(q, 1-q). Same box as main_convergence.jl.
+lower_bound = -3.0
+upper_bound = 5.0
+scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
 
 # Environment Variables
 payoffs = Dict([q => Dict([algo => zeros(n_forecasters, T) for algo in algorithms]) for q in quantiles])
@@ -53,6 +63,7 @@ data_lock = ReentrantLock()
 
 for q in quantiles
     quantile_step_reward = total_reward / length(quantiles)
+    loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
 
     Threads.@threads for exp in ProgressBar(1:n_experiments)
         # Experiment Variables
@@ -75,6 +86,18 @@ for q in quantiles
             ErrorException("The defined environment is not yet implemented")
         end
 
+        # Normalize to [0,1] with the shared MinMax scaler so the pinball loss is bounded
+        # by max(q, 1-q). Clamp first to guarantee scores stay in [0,1].
+        for tt in eachindex(realizations)
+            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
+        end
+        for f in keys(forecasters_preds)
+            preds_f = forecasters_preds[f]
+            for tt in eachindex(preds_f)
+                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
+            end
+        end
+
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
@@ -82,14 +105,21 @@ for q in quantiles
             forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
             y_true = realizations[t]
 
-            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, 0.01, 0.2)
+            weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, lr, 0.2)
             temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
             forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
-            temp_scores = 1 .- (forecasters_losses ./ sum(forecasters_losses))
+            temp_scores = 1 .- (forecasters_losses ./ loss_bound)
             payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
 
             rewards_in = delta .* quantile_step_reward .* (max.(0, payoffs_exp[:, t]) ./ max(sum(max.(0, payoffs_exp[:, t])), eps()))
-            rewards_out = (1-delta) .* quantile_step_reward .* (temp_scores ./ sum(temp_scores))
+
+            # Out-of-sample: leave-one-out wagering mechanism (Lambert et al., Thm 2).
+            # Equal wager m = U/N, U = (1-delta)*quantile_step_reward. Truthful,
+            # budget-balanced (sums to U), non-negative, worst case -> 0.
+            U_out = (1-delta) * quantile_step_reward
+            N = n_forecasters
+            loo_mean = (sum(temp_scores) .- temp_scores) ./ (N - 1)   # mean score of the others
+            rewards_out = (U_out / N) .* (1 .+ temp_scores .- loo_mean)
 
             rewards_in_exp[:, t] = rewards_in
             rewards_out_exp[:, t] = rewards_out
@@ -124,6 +154,7 @@ acc_lock_rqr = ReentrantLock()
 for q in quantiles
 
     quantile_step_reward = total_reward / length(quantiles)
+    loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
 
     Threads.@threads for exp in ProgressBar(1:n_experiments)
         # Experiment Variables
@@ -146,6 +177,18 @@ for q in quantiles
             ErrorException("The defined environment is not yet implemented")
         end
 
+        # Normalize to [0,1] with the shared MinMax scaler so the pinball loss is bounded
+        # by max(q, 1-q). Clamp first to guarantee scores stay in [0,1].
+        for tt in eachindex(realizations)
+            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
+        end
+        for f in keys(forecasters_preds)
+            preds_f = forecasters_preds[f]
+            for tt in eachindex(preds_f)
+                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
+            end
+        end
+
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
@@ -165,7 +208,7 @@ for q in quantiles
             y_true = realizations[t]
 
             # Learning Phase
-            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
+            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
             prev_D = D_exp
             D_exp = new_D
 
@@ -180,7 +223,7 @@ for q in quantiles
             if length(temp_forecasts_t) > 0
                 temp_payoffs = shapley_payoff_multiple_lead_times(temp_forecasts_t, temp_weights_t, y_true, q)
                 forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i] .- y_true)) for i in 1:length(temp_forecasts_t)]
-                temp_scores = [max(1 - (forecasters_losses[i] / sum(forecasters_losses)), eps()) for i in 1:length(forecasters_losses)]
+                temp_scores = 1 .- (forecasters_losses ./ loss_bound)
             else 
                 temp_payoffs = zeros(n_forecasters)
                 forecasters_losses = ones(n_forecasters)
@@ -198,13 +241,54 @@ for q in quantiles
             rewards_in = zeros(n_forecasters)
             rewards_out = zeros(n_forecasters)
 
-            payoffs_for_rewards_in = [max(0, payoffs_exp[j, t]) for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
-            rewards_in[[j for j in 1:n_forecasters if alpha[j, t] == 1]] .= eps()
-            rewards_in[[j for j in 1:n_forecasters if alpha[j, t] == 0]] = delta .* quantile_step_reward .* (payoffs_for_rewards_in ./ max(sum(payoffs_for_rewards_in), eps()))
+            active_indices = [j for j in 1:n_forecasters if alpha[j, t] == 0]
+            missing_indices = [j for j in 1:n_forecasters if alpha[j, t] == 1]
 
-            scores_for_rewards_out = [temp_scores[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
-            rewards_out[[j for j in 1:n_forecasters if alpha[j, t] == 1]] .= eps()
-            rewards_out[[j for j in 1:n_forecasters if alpha[j, t] == 0]] = (1-delta) .* quantile_step_reward .* (scores_for_rewards_out / sum(scores_for_rewards_out))
+            #zero-element property: missing indeces gets zero reward
+            rewards_in[missing_indices] .= 0.0
+            rewards_out[missing_indices] .= 0.0
+
+            if length(active_indices) > 0
+                # In-sample reward: in case of edge case where every shplay is <=0 I split the reward uniformly
+                payoffs_for_rewards_in = [max(0, payoffs_exp[j, t]) for j in active_indices]
+                sum_payoffs = sum(payoffs_for_rewards_in)
+
+                if sum_payoffs > 0
+                    # Distribute proportionally
+                    rewards_in[active_indices] = delta .* quantile_step_reward .* (payoffs_for_rewards_in ./ sum_payoffs)
+                else
+                    # Fallback: Distribute uniformly among active sellers
+                    rewards_in[active_indices] .= delta .* quantile_step_reward ./ length(active_indices)
+                end
+            end
+
+            # --- Out-of-Sample: leave-one-out wagering mechanism (Lambert et al., Thm 2) ---
+            # Only active forecasters participate; missing ones keep 0 (zero-element property).
+            # Equal wager m = U/N_act, U = (1-delta)*quantile_step_reward. Truthful,
+            # budget-balanced over the active set (sums to U), non-negative, worst case -> 0.
+            U_out = (1 - delta) * quantile_step_reward
+            scores_out = [temp_scores[j] for j in active_indices]
+            N_act = length(active_indices)
+            
+            if N_act >= 2
+                loo_mean = (sum(scores_out) .- scores_out) ./ (N_act - 1)   # mean score of the other actives
+                rewards_out[active_indices] = (U_out / N_act) .* (1 .+ scores_out .- loo_mean)
+            elseif N_act == 1
+                # Single active forecaster: no "others" to compare against; give the whole pot.
+                rewards_out[active_indices] .= U_out
+            end
+
+            # # Reward calculation
+            # rewards_in = zeros(n_forecasters)
+            # rewards_out = zeros(n_forecasters)
+
+            # payoffs_for_rewards_in = [max(0, payoffs_exp[j, t]) for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
+            # rewards_in[[j for j in 1:n_forecasters if alpha[j, t] == 1]] .= eps()
+            # rewards_in[[j for j in 1:n_forecasters if alpha[j, t] == 0]] = delta .* quantile_step_reward .* (payoffs_for_rewards_in ./ max(sum(payoffs_for_rewards_in), eps()))
+
+            # scores_for_rewards_out = [temp_scores[j] for j in 1:length(forecasters_preds_t) if alpha[j, t] == 0]
+            # rewards_out[[j for j in 1:n_forecasters if alpha[j, t] == 1]] .= eps()
+            # rewards_out[[j for j in 1:n_forecasters if alpha[j, t] == 0]] = (1-delta) .* quantile_step_reward .* (scores_for_rewards_out / sum(scores_for_rewards_out))
 
             rewards_in_exp[:, t] = rewards_in
             rewards_out_exp[:, t] = rewards_out

@@ -23,6 +23,8 @@ quantiles = [0.1, 0.5, 0.9]    # Set the quantile(s) you want to validate
 missing_rate = 0.05
 n_simulations = 100   # Number of Monte Carlo simulations
 burn_in_period = 10  # Number of initial time steps to ignore for loss calculation
+lower_bound_mw = 0.0
+upper_bound_mw = 2262.1
 
 # Grid Search Parameters
 learning_rates = [0.2, 0.1, 0.05, 0.01, 0.005]
@@ -72,7 +74,7 @@ for lr in learning_rates
 
         for q in quantiles
             # Load Data for the current quantile
-            true_prod, forecasters_preds, scalers, scaler_target, _ = preprocessing_forecasts(models_paths, q)
+            true_prod, forecasters_preds, scaler, _ = preprocessing_forecasts(models_paths, q, lower_bound_mw, upper_bound_mw)
             
             total_loss_sims = 0.0
             # Monte Carlo simulations for the current hyperparameter set and quantile
@@ -92,7 +94,7 @@ for lr in learning_rates
                     # Prepare inputs
                     forecasters_preds_t = [forecasters_preds[f][t] for f in model_names]
                     y_true = true_prod[t]
-                    y_true_sc = scaler_target(y_true)
+                    y_true_sc = scaler(y_true)
                     
                     alpha_t = alpha_validation[:, t]
 
@@ -113,7 +115,7 @@ for lr in learning_rates
 
                     # Calculate Loss (on original scale)
                     if t > burn_in_period
-                        agg_forecast = denormalize(agg_forecast_sc, scaler_target)
+                        agg_forecast = denormalize(agg_forecast_sc, scaler)
                         loss_t = mean(quantile_loss.(y_true, agg_forecast, q))
                         cumulative_loss += loss_t
                         count += 1

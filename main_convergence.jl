@@ -3,6 +3,7 @@ using Plots
 using DataStructures
 using ProgressBars
 using Base.Threads
+using Normalization
 using Plots.PlotMeasures
 
 include("functions/functions.jl")
@@ -16,13 +17,21 @@ using .AdaptiveRobustRegression
 
 
 # Environment Settings
-n_experiments = 200
+n_experiments = 100
 T = 20000
 lead_time = 1
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
-environment = "variant"
+environment = "invariant"
+lr = 0.1
+
+# Data bounds for normalization (same fixed box as main_rewards.jl). A single MinMax scaler
+# maps all data to [0,1] so convergence is checked on the same normalized inputs the reward
+# pipeline uses.
+lower_bound = -3.0
+upper_bound = 5.0
+scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
 
 # Environment Variables
 exp_weights = Dict([q => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for q in quantiles])
@@ -49,8 +58,20 @@ for q in quantiles
             ErrorException("The defined environment is not yet implemented")
         end
 
+        # Normalize to [0,1] with the shared MinMax scaler (same box as main_rewards.jl).
+        # Clamp first to keep everything in range.
+        for tt in eachindex(realizations)
+            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
+        end
+        for f in keys(forecasters_preds)
+            preds_f = forecasters_preds[f]
+            for tt in eachindex(preds_f)
+                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
+            end
+        end
+
         if i == 1
-            true_weights[q] = w # saving true weights for each forecaster 
+            true_weights[q] = w # saving true weights for each forecaster
         end
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
@@ -72,15 +93,15 @@ for q in quantiles
         for t in 2:T
             forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
             y_true = realizations[t]
-            
+
             for algo in algorithms
                 # Forecasting combination and weights update
                 if algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
                     prev_D = D_exp
                     D_exp = new_D
                 elseif algo == "QR"
-                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.01, 0.2)
+                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, lr, 0.2)
                 end
             end
         end
