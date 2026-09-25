@@ -17,7 +17,7 @@ using .AdaptiveRobustRegression
 
 
 # Environment Settings
-n_experiments = 100
+n_experiments = 200
 T = 20000
 lead_time = 1
 quantiles = [0.1, 0.5, 0.9]
@@ -97,7 +97,7 @@ for q in quantiles
             for algo in algorithms
                 # Forecasting combination and weights update
                 if algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
                     prev_D = D_exp
                     D_exp = new_D
                 elseif algo == "QR"
@@ -156,16 +156,16 @@ for (i, q) in enumerate(quantiles)
 end
 plot!(
     plot_weigths[3, 1],
-    xlabel="Time [x10\u00b3]",
+    xlabel="Session # [x10\u00b3]",
     xlabelfontsize=14
 )
     plot!(
     plot_weigths[3, 2],
-    xlabel="Time [x10\u00b3]",
+    xlabel="Session # [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_weigths)
-savefig(plot_weigths, "plots/convergence/plot_weight_$(environment)_1lt_all_q.pdf")
+savefig(plot_weigths, "plots/convergence/plot_weight_$(environment)_$(lead_time)lt_all_q.pdf")
 
 # Plot weight for each quantile and algorithm
 for q in quantiles
@@ -208,9 +208,9 @@ for q in quantiles
       top_margin=10mm)
     plot!(
         plot_weights_q[3],
-        xlabel="Time [x10\u00b3]",
+        xlabel="Session # [x10\u00b3]",
         xlabelfontsize=14
     )
     display(plot_weights_q)
-    savefig(plot_weights_q, "plots/convergence/plot_weight_$(environment)_1lt_q$(Int(q*100)).pdf")
+    savefig(plot_weights_q, "plots/convergence/plot_weight_$(environment)_$(lead_time)lt_q$(Int(q*100)).pdf")
 end

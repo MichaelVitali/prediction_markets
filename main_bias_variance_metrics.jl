@@ -90,7 +90,7 @@ for missing_rate in missing_rates
                 if algo == "QR"
                     weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.01, 0.2)
                 elseif algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
                     D_exp = new_D
                 end
 
@@ -210,7 +210,7 @@ for missing_rate in missing_rates
         bg_legend=:transparent,
         top_margin=10mm)
     plot!(plot_biasses[n_forecasters],
-        xlabel="Time [x10³]",
+        xlabel="Session # [x10³]",
         xlabelfontsize=14)
     display(plot_biasses)
     savefig(plot_biasses, "plots/metrics/plot_biasses_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
@@ -247,7 +247,7 @@ for missing_rate in missing_rates
         top_margin=10mm,
     )
     plot!(plot_variances[n_forecasters],
-        xlabel="Time [x10³]",
+        xlabel="Session # [x10³]",
         xlabelfontsize=14)
     display(plot_variances)
     savefig(plot_variances, "plots/metrics/plot_variances_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
@@ -287,7 +287,7 @@ plot!(plot_missingness_var,
 plot!(
     plot_missingness_var[1],
     subplot=3,
-    xlabel="Time [x10\u00b3]",
+    xlabel="Session # [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_missingness_var)
@@ -329,7 +329,7 @@ plot!(plot_missingness_bias[1],
 plot!(
     plot_missingness_bias,
     subplot=3,
-    xlabel="Time [x10\u00b3]",
+    xlabel="Session # [x10\u00b3]",
     xlabelfontsize=16
 )
 display(plot_missingness_bias)

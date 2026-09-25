@@ -27,7 +27,7 @@ using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
 # Environment Settings
-n_experiments = 100
+n_experiments = 5
 T = 364
 lead_time = 96
 quantiles = [0.1, 0.5, 0.9]
@@ -135,7 +135,7 @@ if algo in algorithms
                 loss_t = mean(quantile_loss.(y_true, aggregated_forecast_t, q))
                 losses_qr_exp[t] = loss_t
                 
-                temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true_sc, q)
+                temp_payoffs = shapley_payoff_multiple_lead_times_refit(forecasters_preds_t, weights_exp[:, t-1], y_true_sc, q)
                 forecasters_losses = [mean(quantile_loss.(y_true_sc, forecasters_preds_t[i], q)) for i in 1:n_forecasters]
                 temp_scores = 1 .- (forecasters_losses ./ loss_bound)
                 payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
@@ -218,7 +218,7 @@ if algo in algorithms
 
                 # Learning Phase
                 y_true_sc = scaler(y_true)
-                weights_exp[:, t], new_D, aggregated_forecast_t = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true_sc, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.1, 0.1)
+                weights_exp[:, t], new_D, aggregated_forecast_t = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true_sc, weights_exp[:, t-1], D_exp, alpha[:, t], q, 0.1, 0.1)
                 prev_D = D_exp
                 D_exp = new_D
                 aggregated_forecast_t = denormalize(aggregated_forecast_t, scaler)
@@ -235,7 +235,7 @@ if algo in algorithms
                 temp_payoffs = nothing
                 forecasters_losses = nothing
                 if length(temp_forecasts_t) > 0
-                    temp_payoffs = shapley_payoff_multiple_lead_times(temp_forecasts_t, temp_weights_t, y_true_sc, q)
+                    temp_payoffs = shapley_payoff_multiple_lead_times_refit(temp_forecasts_t, temp_weights_t, y_true_sc, q)
                     forecasters_losses = [mean(quantile_loss.(y_true_sc, temp_forecasts_t[i], q)) for i in 1:length(temp_forecasts_t)]
                     temp_scores = 1 .- (forecasters_losses ./ loss_bound)
                 else 

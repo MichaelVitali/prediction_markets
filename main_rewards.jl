@@ -27,12 +27,14 @@ n_forecasters = 3
 algorithms = ["QR", "RQR"]
 payoff_functions = "Shapley"
 total_reward = 100
-T = 20000
-n_experiments = 100
-lead_time = 1
+T = 10000
+n_experiments = 1
+lead_time = 24
 delta = 0.7
 environment = "invariant"
 lr = 0.1   # shared learning rate for all algorithms (QR and RQR)
+payoff_halflife = 60                       # EMA half-life for payoff smoothing, in steps (days)
+lambda_payoff = 0.5^(1 / payoff_halflife)  # -> old payoffs lose half their weight every 60 steps
 
 # Data bounds for normalization. Synthetic data is Gaussian (unbounded), so we impose a
 # fixed a-priori box covering the generating distributions (forecaster means ~0..2, sd ~1).
@@ -92,10 +94,7 @@ for q in quantiles
             realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
         end
         for f in keys(forecasters_preds)
-            preds_f = forecasters_preds[f]
-            for tt in eachindex(preds_f)
-                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
-            end
+            forecasters_preds[f] = [scaler(clamp.(v, lower_bound, upper_bound)) for v in forecasters_preds[f]]
         end
 
         sorted_f = sort(collect(forecasters_preds), by=first)
@@ -106,10 +105,10 @@ for q in quantiles
             y_true = realizations[t]
 
             weights_exp[:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q, lr, 0.2)
-            temp_payoffs = shapley_payoff_multiple_lead_times(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
+            temp_payoffs = shapley_payoff_multiple_lead_times_refit(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
             forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for (i, f) in enumerate(keys(sorted_forecasters))]
             temp_scores = 1 .- (forecasters_losses ./ loss_bound)
-            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
+            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
 
             rewards_in = delta .* quantile_step_reward .* (max.(0, payoffs_exp[:, t]) ./ max(sum(max.(0, payoffs_exp[:, t])), eps()))
 
@@ -183,10 +182,7 @@ for q in quantiles
             realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
         end
         for f in keys(forecasters_preds)
-            preds_f = forecasters_preds[f]
-            for tt in eachindex(preds_f)
-                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
-            end
+            forecasters_preds[f] = [scaler(clamp.(v, lower_bound, upper_bound)) for v in forecasters_preds[f]]
         end
 
         sorted_f = sort(collect(forecasters_preds), by=first)
@@ -208,7 +204,7 @@ for q in quantiles
             y_true = realizations[t]
 
             # Learning Phase
-            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times_trial(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
+            weights_exp[:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
             prev_D = D_exp
             D_exp = new_D
 
@@ -221,7 +217,7 @@ for q in quantiles
             temp_payoffs = nothing
             forecasters_losses = nothing
             if length(temp_forecasts_t) > 0
-                temp_payoffs = shapley_payoff_multiple_lead_times(temp_forecasts_t, temp_weights_t, y_true, q)
+                temp_payoffs = shapley_payoff_multiple_lead_times_refit(temp_forecasts_t, temp_weights_t, y_true, q)
                 forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i] .- y_true)) for i in 1:length(temp_forecasts_t)]
                 temp_scores = 1 .- (forecasters_losses ./ loss_bound)
             else 
@@ -235,7 +231,7 @@ for q in quantiles
                     insert!(temp_scores, j, 0.0)
                 end
             end
-            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, 0.999)
+            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
 
             # Reward calculation
             rewards_in = zeros(n_forecasters)
@@ -376,7 +372,7 @@ plot!(plot_rewards[2],
       top_margin=10mm)
 plot!(
     plot_rewards[3],
-    xlabel="Time [x10\u00b3]",
+    xlabel="Session # [x10\u00b3]",
     xlabelfontsize=14
 )
 display(plot_rewards)
@@ -387,7 +383,7 @@ subplot_letters = [('a' + i - 1) for i in 1:length(algorithms)]
 plot_in_out_rewards = plot(layout=(2, length(algorithms)), size=(1000, 700))
 for (i, algo) in enumerate(algorithms)
     plot!(plot_in_out_rewards[1, i], 1:T, total_in_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-    xlabel="Time", 
+    xlabel="Session #", 
     ylims=ylims_in,
     ylabel="in-sample reward [£]",
     legend=false,
@@ -403,7 +399,7 @@ for (i, algo) in enumerate(algorithms)
     )
 
     plot!(plot_in_out_rewards[2, i], 1:T, total_out_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-    xlabel="Time", 
+    xlabel="Session #", 
     ylims=ylims_out,
     ylabel="out-of-sample reward [£]",
     legend=false,
@@ -427,7 +423,7 @@ for (i, algo) in enumerate(algorithms)
     for (j, q) in enumerate(quantiles)
         
         plot!(plot_reward_quantiles[j, i], 1:T, rewards[q][algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-        xlabel="Time", 
+        xlabel="Session #", 
         ylims=ylims_rq,
         ylabel="Total reward [£]",
         legend=false,
@@ -458,7 +454,7 @@ plot_insta_cum_reward = plot(layout=(2, length(algorithms)), size=(1000, 800))
 for (i, algo) in enumerate(algorithms)
 
     plot!(plot_insta_cum_reward[1, i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-        xlabel="Time", 
+        xlabel="Session #", 
         ylims=ylims_total,
         ylabel="Instantaneous reward [£]",
         legend=false,
@@ -475,7 +471,7 @@ for (i, algo) in enumerate(algorithms)
     )
     
     plot!(plot_insta_cum_reward[2, i], 1:T, cumsum(total_rewards_forecasters[algo], dims=2)', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
-        xlabel="Time", 
+        xlabel="Session #", 
         ylims=ylims_cum,
         ylabel="Cumulative reward [£]",
         legend=false,
