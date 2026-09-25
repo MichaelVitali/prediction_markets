@@ -6,7 +6,7 @@ using Statistics
 include("../functions/functions.jl")
 using .UtilsFunctions
 
-export online_adaptive_robust_quantile_regression, online_adaptive_robust_quantile_regression_multiple_lead_times, online_adaptive_robust_quantile_regression_multiple_lead_times_trial
+export online_adaptive_robust_quantile_regression, online_adaptive_robust_quantile_regression_multiple_lead_times
 
     function online_adaptive_robust_quantile_regression(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01)
 
@@ -28,6 +28,8 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
 
     end
 
+    # Previous implementation (raw gradient step on w and D), superseded by the projected update below
+    #=
     function online_adaptive_robust_quantile_regression_multiple_lead_times(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5)
 
         """
@@ -38,7 +40,7 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
         n_lead_times = length(x[1])
         
         masked_x = x .* (1 .- alpha)
-        effective_w = prev_w .+ (prev_D * alpha)
+        effective_w = (prev_w .+ (prev_D * alpha)) .* (1 .- alpha)
         effective_w = project_to_simplex(effective_w)
         
         agg_quantile_t = sum(masked_x .* effective_w)
@@ -82,67 +84,67 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
 
         return weights, D, agg_quantile_t
     end
+    =#
 
-    function online_adaptive_robust_quantile_regression_multiple_lead_times_trial(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5, D_radius=1.0)
+    """
+        online_adaptive_robust_quantile_regression_multiple_lead_times(x, y, prev_w, prev_D, alpha, q, learning_rate, batch_percentage)
 
-        """
-            Function calculates the update step for the adaptive robust quantile regression method. This function works for multiple lead times.
-        """
+    Same affine model as the previous implementation above (effective weights `w + D*alpha` on the sub-simplex of the
+    available forecasters), but the update is the *projected* step of the effective weights:
+
+        w_eff_new = project_to_simplex(w_eff - lr * grad)      (available forecasters only)
+        delta     = w_eff_new - w_eff
+        w        += delta,   D += delta * alpha'
+
+    Both `w` and `D` move by the displacement the constrained problem actually takes. When the
+    reduced-ensemble optimum sits on a corner of the simplex (target outside the hull of the available
+    forecasters) the raw gradient never vanishes, but the projected step does, so neither `w` nor `D`
+    is pushed indefinitely. `delta` sums to zero over the available forecasters, so the base weight of
+    an absent forecaster is never drained through the projection. With `alpha == 0` this reduces exactly
+    to the QR update.
+    """
+    function online_adaptive_robust_quantile_regression_multiple_lead_times(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5)
 
         n_forecasters = length(x)
         n_lead_times = length(x[1])
-        
-        effective_w = prev_w .+ (prev_D * alpha)
-        effective_w = effective_w .* (1 .- alpha)
         available = alpha .< 1
-        projected = project_to_simplex(effective_w[available])
-        effective_w = zeros(length(effective_w))
-        effective_w[available] = projected
-
         masked_x = x .* (1 .- alpha)
-        agg_quantile_t = sum(masked_x .* effective_w)
+
+        # Effective weights: base + correction, restricted to the available forecasters, on their sub-simplex
+        function effective_weights(w, D)
+            e = (w .+ D * alpha) .* (1 .- alpha)
+            out = zeros(n_forecasters)
+            out[available] = project_to_simplex(e[available])
+            return out
+        end
+
         weights = copy(prev_w)
         D = copy(prev_D)
+        w_eff = effective_weights(weights, D)
+        agg_quantile_t = sum(masked_x .* w_eff)     # forecast issued this session (frozen, as in the other variants)
 
         batch_size = max(1, floor(Int, n_lead_times * batch_percentage))
 
-        # Iterate through the data in chunks of batch_size
         for batch_start in 1:batch_size:n_lead_times
             batch_end = min(batch_start + batch_size - 1, n_lead_times)
             current_batch_size = batch_end - batch_start + 1
-            
-            # Initialize empty accumulators for both weights and the D matrix
-            batch_grad_w = zeros(n_forecasters)
-            batch_grad_D = zeros(size(D)) 
-            
-            # Accumulate gradients for all points in the current batch
+
+            batch_grad = zeros(n_forecasters)
             for t in batch_start:batch_end
                 preds_t = [masked_x[i][t] for i in 1:n_forecasters]
-                gradient_loss_t = quantile_loss_gradient(y[t], agg_quantile_t[t], q)
-                
-                # Calculate individual gradients
-                grad_w_t = (1 .- alpha) .* preds_t .* gradient_loss_t
-                grad_D_t = grad_w_t * alpha'
-
-                # Add to batch accumulators
-                batch_grad_w .+= grad_w_t
-                batch_grad_D .+= grad_D_t
+                batch_grad .+= preds_t .* quantile_loss_gradient(y[t], agg_quantile_t[t], q)
             end
+            batch_grad ./= current_batch_size
 
-            # Average the gradients over the batch to maintain a stable learning rate
-            batch_grad_w ./= current_batch_size
-            batch_grad_D ./= current_batch_size
+            # Projected step on the effective weights of the available forecasters
+            w_eff_new = zeros(n_forecasters)
+            w_eff_new[available] = project_to_simplex(w_eff[available] .- learning_rate .* batch_grad[available])
+            delta = w_eff_new .- w_eff
 
-            # Update weights and matrix ONCE per batch
-            weights = weights .- learning_rate .* batch_grad_w
-            weights = project_to_simplex(weights)
-            D = D .- learning_rate .* batch_grad_D
-            # Project D onto a Frobenius-norm ball so the robust correction stays bounded
-            # (mirrors the simplex projection of the weights) and can't drift at higher lr.
-            nD = norm(D)
-            if nD > D_radius
-                D = D .* (D_radius / nD)
-            end
+            # Distribute the displacement to the base weights and the correction column(s)
+            weights = project_to_simplex(weights .+ delta)
+            D = D .+ delta * alpha'
+            w_eff = effective_weights(weights, D)
         end
 
         return weights, D, agg_quantile_t
