@@ -17,3 +17,15 @@ old_implementations/
 download_dwd_data.py
 main_train_models.py
 real_world_test/main_plot_single_day.jl
+docs/
+*.tex
+*.bib
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
