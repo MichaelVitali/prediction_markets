@@ -29,3 +29,6 @@ docs/
 *.fdb_latexmk
 *.synctex.gz
 *.toc
+CLAUDE.md
+CLAUDE.local.md
+.claude/
