@@ -6,7 +6,7 @@ using Statistics
 include("../functions/functions.jl")
 using .UtilsFunctions
 
-export online_adaptive_robust_quantile_regression, online_adaptive_robust_quantile_regression_multiple_lead_times
+export online_adaptive_robust_quantile_regression, online_adaptive_robust_quantile_regression_multiple_lead_times, rqr_aggregate, rqr_update
 
     function online_adaptive_robust_quantile_regression(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01)
 
@@ -105,23 +105,49 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
     """
     function online_adaptive_robust_quantile_regression_multiple_lead_times(x, y, prev_w, prev_D, alpha, q, learning_rate=0.01, batch_percentage=0.5)
 
+        agg_quantile_t = rqr_aggregate(x, prev_w, prev_D, alpha)
+        weights, D = rqr_update(x, y, prev_w, prev_D, alpha, agg_quantile_t, q, learning_rate, batch_percentage)
+
+        return weights, D, agg_quantile_t
+    end
+
+    # Effective weights: base + correction, restricted to the available forecasters, on their sub-simplex
+    function effective_weights(w, D, alpha)
+        available = alpha .< 1
+        e = (w .+ D * alpha) .* (1 .- alpha)
+        out = zeros(length(w))
+        out[available] = project_to_simplex(e[available])
+        return out
+    end
+
+    """
+        rqr_aggregate(x, prev_w, prev_D, alpha)
+
+    Combined forecast (one value per lead time) issued in the session, using the effective weights
+    of the available forecasters (`alpha[i] == 1` marks forecaster `i` as missing).
+    """
+    function rqr_aggregate(x, prev_w, prev_D, alpha)
+        masked_x = x .* (1 .- alpha)
+        w_eff = effective_weights(prev_w, prev_D, alpha)
+        return sum(masked_x .* w_eff)
+    end
+
+    """
+        rqr_update(x, y, prev_w, prev_D, alpha, agg_quantile_t, q, learning_rate, batch_percentage)
+
+    Projected update of `w` and `D` once the realization `y` is observed. The gradient is evaluated
+    at the forecast `agg_quantile_t` issued in the session (frozen over the batches).
+    """
+    function rqr_update(x, y, prev_w, prev_D, alpha, agg_quantile_t, q, learning_rate=0.01, batch_percentage=0.5)
+
         n_forecasters = length(x)
         n_lead_times = length(x[1])
         available = alpha .< 1
         masked_x = x .* (1 .- alpha)
 
-        # Effective weights: base + correction, restricted to the available forecasters, on their sub-simplex
-        function effective_weights(w, D)
-            e = (w .+ D * alpha) .* (1 .- alpha)
-            out = zeros(n_forecasters)
-            out[available] = project_to_simplex(e[available])
-            return out
-        end
-
         weights = copy(prev_w)
         D = copy(prev_D)
-        w_eff = effective_weights(weights, D)
-        agg_quantile_t = sum(masked_x .* w_eff)     # forecast issued this session (frozen, as in the other variants)
+        w_eff = effective_weights(weights, D, alpha)
 
         batch_size = max(1, floor(Int, n_lead_times * batch_percentage))
 
@@ -144,10 +170,10 @@ export online_adaptive_robust_quantile_regression, online_adaptive_robust_quanti
             # Distribute the displacement to the base weights and the correction column(s)
             weights = project_to_simplex(weights .+ delta)
             D = D .+ delta * alpha'
-            w_eff = effective_weights(weights, D)
+            w_eff = effective_weights(weights, D, alpha)
         end
 
-        return weights, D, agg_quantile_t
+        return weights, D
     end
 
 end

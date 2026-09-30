@@ -95,13 +95,13 @@ for q in quantiles
             y_true = realizations[t]
 
             for algo in algorithms
-                # Forecasting combination and weights update
                 if algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, lr, 0.2)
-                    prev_D = D_exp
-                    D_exp = new_D
+                    # Forecast combination (session closes), then update once y_true is observed
+                    aggregated_forecast_t = rqr_aggregate(forecasters_preds_t, weights_history[algo][:, t-1], D_exp, alpha[:, t])
+                    weights_history[algo][:, t], D_exp = rqr_update(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], aggregated_forecast_t, q, lr, 0.2)
                 elseif algo == "QR"
-                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, lr, 0.2)
+                    aggregated_forecast_t = qr_aggregate(forecasters_preds_t, weights_history[algo][:, t-1])
+                    weights_history[algo][:, t] = qr_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, aggregated_forecast_t, q, lr, 0.2)
                 end
             end
         end

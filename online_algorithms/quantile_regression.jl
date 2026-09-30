@@ -8,7 +8,7 @@ module QuantileRegression
     using .UtilsFunctions
     using .DataGeneration
 
-export online_quantile_regression, online_quantile_regression_update, online_quantile_regression_update_multiple_lead_times
+export online_quantile_regression, online_quantile_regression_update, online_quantile_regression_update_multiple_lead_times, qr_aggregate, qr_update
 
     function online_quantile_regression(forecasters_preds, forecaster_weights, y_true, T, q)
 
@@ -43,11 +43,31 @@ export online_quantile_regression, online_quantile_regression_update, online_qua
 
     function online_quantile_regression_update_multiple_lead_times(forecasters_preds, prev_forecaster_weights, y_true, q, learning_rate=0.01, batch_percentage=0.5)
 
+        agg_quantile_t = qr_aggregate(forecasters_preds, prev_forecaster_weights)
+        weights = qr_update(forecasters_preds, prev_forecaster_weights, y_true, agg_quantile_t, q, learning_rate, batch_percentage)
+
+        return weights, agg_quantile_t
+    end
+
+    """
+        qr_aggregate(forecasters_preds, weights)
+
+    Combined forecast (one value per lead time) issued with the current weights.
+    """
+    function qr_aggregate(forecasters_preds, weights)
+        return sum(forecasters_preds .* weights, dims=1)[1]
+    end
+
+    """
+        qr_update(forecasters_preds, prev_forecaster_weights, y_true, agg_quantile_t, q, learning_rate, batch_percentage)
+
+    Mini-batch projected subgradient step on the simplex, once the realization `y_true` is observed.
+    The gradient is evaluated at the forecast `agg_quantile_t` issued in the session (frozen over the batches).
+    """
+    function qr_update(forecasters_preds, prev_forecaster_weights, y_true, agg_quantile_t, q, learning_rate=0.01, batch_percentage=0.5)
+
         n_forecasters = length(forecasters_preds)
         n_lead_times = length(forecasters_preds[1])
-
-        # Kept exactly as requested
-        agg_quantile_t = sum(forecasters_preds .* prev_forecaster_weights, dims=1)[1]
         weights = copy(prev_forecaster_weights)
 
         # Calculate batch dimension based on percentage (minimum size of 1)
@@ -78,6 +98,6 @@ export online_quantile_regression, online_quantile_regression_update, online_qua
             weights = project_to_simplex(weights)
         end
 
-        return weights, agg_quantile_t
+        return weights
     end
 end
