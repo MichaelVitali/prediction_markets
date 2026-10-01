@@ -5,6 +5,7 @@ using ProgressBars
 using Base.Threads
 using Normalization
 using Plots.PlotMeasures
+using Random
 
 include("functions/functions.jl")
 include("data_generation/DataGeneration.jl")
@@ -17,14 +18,17 @@ using .AdaptiveRobustRegression
 
 
 # Environment Settings
-n_experiments = 200
+n_experiments = 100
 T = 20000
-lead_time = 1
+lead_time = 12
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
 environment = "invariant"
 lr = 0.1
+batch_percentage = 0.2
+missing_rate = 0.05         # RQR missing-submission rate
+seed = 1234
 
 # Data bounds for normalization (same fixed box as main_rewards.jl). A single MinMax scaler
 # maps all data to [0,1] so convergence is checked on the same normalized inputs the reward
@@ -33,8 +37,11 @@ lower_bound = -3.0
 upper_bound = 5.0
 scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
 
+Random.seed!(seed)
+
 # Environment Variables
-exp_weights = Dict([q => Dict([algo => zeros((n_forecasters, T)) for algo in algorithms]) for q in quantiles])
+# Weights averaged over the Monte-Carlo runs, keyed by (quantile, algorithm) => (n_forecasters, T)
+exp_weights = Dict([(q, algo) => zeros((n_forecasters, T)) for q in quantiles for algo in algorithms])
 true_weights = Dict()
 
 for q in quantiles
@@ -55,7 +62,7 @@ for q in quantiles
         elseif environment == "variant"
             realizations, forecasters_preds, w = generate_dynamic_data_sin_multiple_lead_times(T, lead_time, q)
         else
-            ErrorException("The defined environment is not yet implemented")
+            error("The defined environment is not yet implemented")
         end
 
         # Normalize to [0,1] with the shared MinMax scaler (same box as main_rewards.jl).
@@ -73,12 +80,11 @@ for q in quantiles
         if i == 1
             true_weights[q] = w # saving true weights for each forecaster
         end
-        sorted_f = sort(collect(forecasters_preds), by=first)
-        sorted_forecasters = OrderedDict(sorted_f)
+        forecaster_names = sort(collect(keys(forecasters_preds)))
 
         # Initialization RQR
         if "RQR" in algorithms
-            alpha = Int.(rand(n_forecasters, T) .< 0.05)
+            alpha = Int.(rand(n_forecasters, T) .< missing_rate)
             D_exp = zeros(n_forecasters, n_forecasters)
 
             for t in 1:T
@@ -91,34 +97,32 @@ for q in quantiles
 
         # Learning process
         for t in 2:T
-            forecasters_preds_t = [forecasters_preds[f][t] for f in keys(sorted_forecasters)]
+            forecasters_preds_t = [forecasters_preds[f][t] for f in forecaster_names]
             y_true = realizations[t]
 
             for algo in algorithms
                 if algo == "RQR"
                     # Forecast combination (session closes), then update once y_true is observed
                     aggregated_forecast_t = rqr_aggregate(forecasters_preds_t, weights_history[algo][:, t-1], D_exp, alpha[:, t])
-                    weights_history[algo][:, t], D_exp = rqr_update(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], aggregated_forecast_t, q, lr, 0.2)
+                    weights_history[algo][:, t], D_exp = rqr_update(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], aggregated_forecast_t, q, lr, batch_percentage)
                 elseif algo == "QR"
                     aggregated_forecast_t = qr_aggregate(forecasters_preds_t, weights_history[algo][:, t-1])
-                    weights_history[algo][:, t] = qr_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, aggregated_forecast_t, q, lr, 0.2)
+                    weights_history[algo][:, t] = qr_update(forecasters_preds_t, weights_history[algo][:, t-1], y_true, aggregated_forecast_t, q, lr, batch_percentage)
                 end
             end
         end
 
         lock(data_lock) do
             for algo in algorithms
-                exp_weights[q][algo] .+= weights_history[algo]
+                exp_weights[(q, algo)] .+= weights_history[algo]
             end
         end
     end
 end
 
-#################### Post-processing monte- ####################
-for algo in algorithms
-    for q in quantiles
-        exp_weights[q][algo] = exp_weights[q][algo] ./ n_experiments
-    end
+#################### Monte-Carlo average ####################
+for key in keys(exp_weights)
+    exp_weights[key] ./= n_experiments
 end
 
 # Plot weights for all quantiles and algorithms
@@ -127,7 +131,7 @@ x = 1:5000:T
 
 # Shared y-limits for every weight panel (all quantiles, algorithms and per-quantile figures)
 ylims_w = padded_ylims(
-    [exp_weights[q][algo] for q in quantiles for algo in algorithms]...,
+    [exp_weights[(q, algo)] for q in quantiles for algo in algorithms]...,
     [true_weights[q] for q in quantiles]...
 )
 
@@ -135,7 +139,7 @@ plot_weigths = plot(layout=(length(quantiles), length(algorithms)), size=(2200, 
 
 for (i, q) in enumerate(quantiles)
     for (j, algo) in enumerate(algorithms)
-        plot!(plot_weigths[i, j], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
+        plot!(plot_weigths[i, j], 1:T, exp_weights[(q, algo)]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
         ylims=ylims_w,
         ylabel = (i == 2) ? "Weights [p.u.]" : "",
         legend=:topright,
@@ -182,7 +186,7 @@ for q in quantiles
     )
 
     for (j, algo) in enumerate(algorithms)
-        plot!(plot_weights_q[j+1], 1:T, exp_weights[q][algo]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
+        plot!(plot_weights_q[j+1], 1:T, exp_weights[(q, algo)]', label=["Forecaster 1" "Forecaster 2" "Forecaster 3"],
         ylims=ylims_w,
         ylabel="",
         legend=false,
