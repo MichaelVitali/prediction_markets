@@ -20,7 +20,7 @@ using .AdaptiveRobustRegression
 # Environment Settings
 n_experiments = 100
 T = 20000
-lead_time = 12
+lead_time = 1
 quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
@@ -37,63 +37,45 @@ lower_bound = -3.0
 upper_bound = 5.0
 scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
 
-Random.seed!(seed)
+generators = Dict("invariant" => generate_time_invariant_data_multiple_lead_times,
+                  "abrupt" => generate_abrupt_data_multiple_lead_times,
+                  "variant" => generate_dynamic_data_sin_multiple_lead_times)
+haskey(generators, environment) || error("The defined environment is not yet implemented")
 
 # Environment Variables
 # Weights averaged over the Monte-Carlo runs, keyed by (quantile, algorithm) => (n_forecasters, T)
 exp_weights = Dict([(q, algo) => zeros((n_forecasters, T)) for q in quantiles for algo in algorithms])
 true_weights = Dict()
 
-for q in quantiles
-    data_lock = ReentrantLock()
-    Threads.@threads for i in ProgressBar(1:n_experiments)
+data_lock = ReentrantLock()
+Threads.@threads for i in ProgressBar(1:n_experiments)
+
+    # One data draw per experiment, shared by all quantiles and algorithms (own seed: independent of threading)
+    rng = Xoshiro(seed + i)
+    realizations, forecasts, w = generators[environment](T, lead_time, quantiles; rng)
+
+    # Normalize to [0,1] with the shared MinMax scaler (same box as main_rewards.jl).
+    # Clamp first to keep everything in range.
+    realizations = [scaler(clamp.(v, lower_bound, upper_bound)) for v in realizations]
+    forecaster_names = sort(collect(keys(forecasts[quantiles[1]])))
+
+    # Missing submissions (RQR), drawn once per experiment: a missing seller misses every quantile
+    alpha = Int.(rand(rng, n_forecasters, T) .< missing_rate)
+    for t in 1:T
+        if sum(alpha[:, t]) == n_forecasters
+            alpha[rand(rng, 1:n_forecasters), t] = 0
+        end
+    end
+
+    for q in quantiles
+        forecasters_preds = Dict(f => [scaler(clamp.(v, lower_bound, upper_bound)) for v in forecasts[q][f]] for f in forecaster_names)
 
         # Initialization
         weights_history = Dict([algo => zeros((n_forecasters, T)) for algo in algorithms])
         for algo in algorithms
             weights_history[algo][:, 1] .= initialize_weights(n_forecasters)
         end
-        
-        # Data generation
-        if environment == "invariant"
-            realizations, forecasters_preds, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
-        elseif  environment == "abrupt"
-            realizations, forecasters_preds, w = generate_abrupt_data_multiple_lead_times(T, lead_time, q)
-        elseif environment == "variant"
-            realizations, forecasters_preds, w = generate_dynamic_data_sin_multiple_lead_times(T, lead_time, q)
-        else
-            error("The defined environment is not yet implemented")
-        end
-
-        # Normalize to [0,1] with the shared MinMax scaler (same box as main_rewards.jl).
-        # Clamp first to keep everything in range.
-        for tt in eachindex(realizations)
-            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
-        end
-        for f in keys(forecasters_preds)
-            preds_f = forecasters_preds[f]
-            for tt in eachindex(preds_f)
-                preds_f[tt] = scaler(clamp.(preds_f[tt], lower_bound, upper_bound))
-            end
-        end
-
-        if i == 1
-            true_weights[q] = w # saving true weights for each forecaster
-        end
-        forecaster_names = sort(collect(keys(forecasters_preds)))
-
-        # Initialization RQR
-        if "RQR" in algorithms
-            alpha = Int.(rand(n_forecasters, T) .< missing_rate)
-            D_exp = zeros(n_forecasters, n_forecasters)
-
-            for t in 1:T
-                if sum(alpha[:, t]) == length(alpha[:, t])
-                    idx = rand(1:length(alpha[:, t]))
-                    alpha[idx, t] = 0
-                end
-            end
-        end
+        D_exp = zeros(n_forecasters, n_forecasters)
 
         # Learning process
         for t in 2:T
@@ -115,6 +97,9 @@ for q in quantiles
         lock(data_lock) do
             for algo in algorithms
                 exp_weights[(q, algo)] .+= weights_history[algo]
+            end
+            if i == 1
+                true_weights[q] = w   # same true weights for every quantile
             end
         end
     end

@@ -47,7 +47,32 @@ lower_bound = -3.0
 upper_bound = 5.0
 scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
 
-Random.seed!(seed)
+generators = Dict("invariant" => generate_time_invariant_data_multiple_lead_times,
+                  "abrupt" => generate_abrupt_data_multiple_lead_times,
+                  "variant" => generate_dynamic_data_sin_multiple_lead_times)
+haskey(generators, environment) || error("The defined environment is not yet implemented")
+
+# One data draw per experiment, shared by all quantiles and by the QR and RQR sections: every experiment has
+# its own seeded rng, so both sections regenerate exactly the same data (and results don't depend on threading).
+function generate_experiment(exp)
+    rng = Xoshiro(seed + exp)
+    realizations, forecasts, _ = generators[environment](T, lead_time, quantiles; rng)
+
+    # Normalize to [0,1] with the shared MinMax scaler so the pinball loss is bounded
+    # by max(q, 1-q). Clamp first to guarantee scores stay in [0,1].
+    to_unit(v) = scaler(clamp.(v, lower_bound, upper_bound))
+    realizations = to_unit.(realizations)
+    forecasts = Dict(q => Dict(f => to_unit.(preds) for (f, preds) in forecasts[q]) for q in quantiles)
+
+    # Missing submissions (used by RQR): a missing seller misses every quantile; at least one is always available
+    alpha = Int.(rand(rng, n_forecasters, T) .< missing_rate)
+    for t in 1:T
+        if sum(alpha[:, t]) == n_forecasters
+            alpha[rand(rng, 1:n_forecasters), t] = 0
+        end
+    end
+    return realizations, forecasts, alpha
+end
 
 # Environment Variables
 # Results averaged over the Monte-Carlo runs, keyed by (quantile, algorithm) => (n_forecasters, T)
@@ -61,11 +86,15 @@ rewards_out_sample = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantil
 algo = "QR"
 data_lock = ReentrantLock()
 
-for q in quantiles
-    quantile_step_reward = total_reward / length(quantiles)
-    loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
+Threads.@threads for exp in ProgressBar(1:n_experiments)
+    realizations, forecasts, _ = generate_experiment(exp)
 
-    Threads.@threads for exp in ProgressBar(1:n_experiments)
+    for q in quantiles
+        quantile_step_reward = total_reward / length(quantiles)
+        loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
+        forecasters_preds = forecasts[q]
+        forecaster_names = sort(collect(keys(forecasters_preds)))
+
         # Experiment Variables
         weights_exp = zeros(n_forecasters, T)
         payoffs_exp = zeros(n_forecasters, T)
@@ -74,28 +103,6 @@ for q in quantiles
         rewards_out_exp = zeros(n_forecasters, T)
 
         weights_exp[:, 1] = initialize_weights(n_forecasters)
-
-        # Data generation
-        if environment == "invariant"
-            realizations, forecasters_preds, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
-        elseif  environment == "abrupt"
-            realizations, forecasters_preds, w = generate_abrupt_data_multiple_lead_times(T, lead_time, q)
-        elseif environment == "variant"
-            realizations, forecasters_preds, w = generate_dynamic_data_sin_multiple_lead_times(T, lead_time, q)
-        else
-            error("The defined environment is not yet implemented")
-        end
-
-        # Normalize to [0,1] with the shared MinMax scaler so the pinball loss is bounded
-        # by max(q, 1-q). Clamp first to guarantee scores stay in [0,1].
-        for tt in eachindex(realizations)
-            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
-        end
-        for f in keys(forecasters_preds)
-            forecasters_preds[f] = [scaler(clamp.(v, lower_bound, upper_bound)) for v in forecasters_preds[f]]
-        end
-
-        forecaster_names = sort(collect(keys(forecasters_preds)))
 
         for t in 2:T
             forecasters_preds_t = [forecasters_preds[f][t] for f in forecaster_names]
@@ -139,12 +146,15 @@ end
 algo = "RQR"
 acc_lock_rqr = ReentrantLock()
 
-for q in quantiles
+Threads.@threads for exp in ProgressBar(1:n_experiments)
+    realizations, forecasts, alpha = generate_experiment(exp)
 
-    quantile_step_reward = total_reward / length(quantiles)
-    loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
+    for q in quantiles
+        quantile_step_reward = total_reward / length(quantiles)
+        loss_bound = max(q, 1 - q)   # max pinball loss on the [0,1]-normalized scale
+        forecasters_preds = forecasts[q]
+        forecaster_names = sort(collect(keys(forecasters_preds)))
 
-    Threads.@threads for exp in ProgressBar(1:n_experiments)
         # Experiment Variables
         weights_exp = zeros(n_forecasters, T)
         payoffs_exp = zeros(n_forecasters, T)
@@ -153,37 +163,7 @@ for q in quantiles
         rewards_out_exp = zeros(n_forecasters, T)
 
         weights_exp[:, 1] = initialize_weights(n_forecasters)
-
-        # Data generation
-        if environment == "invariant"
-            realizations, forecasters_preds, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
-        elseif  environment == "abrupt"
-            realizations, forecasters_preds, w = generate_abrupt_data_multiple_lead_times(T, lead_time, q)
-        elseif environment == "variant"
-            realizations, forecasters_preds, w = generate_dynamic_data_sin_multiple_lead_times(T, lead_time, q)
-        else
-            error("The defined environment is not yet implemented")
-        end
-
-        # Normalize to [0,1] with the shared MinMax scaler so the pinball loss is bounded
-        # by max(q, 1-q). Clamp first to guarantee scores stay in [0,1].
-        for tt in eachindex(realizations)
-            realizations[tt] = scaler(clamp.(realizations[tt], lower_bound, upper_bound))
-        end
-        for f in keys(forecasters_preds)
-            forecasters_preds[f] = [scaler(clamp.(v, lower_bound, upper_bound)) for v in forecasters_preds[f]]
-        end
-
-        forecaster_names = sort(collect(keys(forecasters_preds)))
-
         D_exp = zeros(n_forecasters, n_forecasters)
-        alpha = Int.(rand(n_forecasters, T) .< missing_rate)
-        for t in 1:T
-            if sum(alpha[:, t]) == length(alpha[:, t])
-                idx = rand(1:length(alpha[:, t]))
-                alpha[idx, t] = 0
-            end
-        end
 
         for t in 2:T
             forecasters_preds_t = [forecasters_preds[f][t] for f in forecaster_names]

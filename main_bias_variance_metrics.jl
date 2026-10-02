@@ -5,6 +5,7 @@ using Statistics
 using ProgressBars
 using Base.Threads
 using Plots.PlotMeasures
+using Random
 
 include("functions/functions.jl")
 include("functions/metrics.jl")
@@ -29,6 +30,7 @@ show_benchmarks = true
 lead_time = 1
 missing_rates = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90]
 #missing_rates = [0.05]
+seed = 1234
 
 if show_benchmarks
     push!(algorithms, "mean_impute")
@@ -48,7 +50,7 @@ for missing_rate in missing_rates
 
     # Set true_weights once from a single data draw (same for all experiments/missing rates)
     if true_weights === nothing
-        _, _, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
+        _, _, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, [q])
         global true_weights = w'
     end
 
@@ -64,18 +66,20 @@ for missing_rate in missing_rates
             end
         end
 
-        # Data generation
-        realizations, forecasters_preds, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, q)
+        # Data generation (own seed: independent of threading)
+        rng = Xoshiro(seed + i)
+        realizations, forecasts, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, [q]; rng)
+        forecasters_preds = forecasts[q]
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
         if "RQR" in algorithms
-            alpha = Int.(rand(n_forecasters, T) .< missing_rate)
+            alpha = Int.(rand(rng, n_forecasters, T) .< missing_rate)
             D_exp = zeros(n_forecasters, n_forecasters)
 
             for t in 1:T
                 if sum(alpha[:, t]) == length(alpha[:, t])
-                    idx = rand(1:length(alpha[:, t]))
+                    idx = rand(rng, 1:length(alpha[:, t]))
                     alpha[idx, t] = 0
                 end
             end
