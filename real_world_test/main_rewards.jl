@@ -38,8 +38,6 @@ algorithms = ["QR", "RQR"]
 missing_rate = 0.05         # RQR missing-submission rate
 lambda_payoff = 0.999       # EMA factor of the in-sample (Shapley) payoffs
 
-Random.seed!(seed)
-
 # Environment Variables
 realizations = OrderedDict([q => Vector{Vector{Float64}}() for q in quantiles])
 algo_forecasts = OrderedDict([q => OrderedDict([name => [] for name in model_names]) for q in quantiles])
@@ -167,6 +165,19 @@ end
 algo = "RQR"
 data_lock = ReentrantLock()
 
+# Missing submissions, drawn once per experiment (own seed: independent of threading) and shared by all
+# quantiles: a missing seller misses the whole session. At least one seller is always available.
+alphas = map(1:n_experiments) do exp
+    rng = Xoshiro(seed + exp)
+    alpha = Int.(rand(rng, n_forecasters, T) .< missing_rate)
+    for t in 1:T
+        if sum(alpha[:, t]) == n_forecasters
+            alpha[rand(rng, 1:n_forecasters), t] = 0
+        end
+    end
+    alpha
+end
+
 if algo in algorithms
     for q in quantiles
 
@@ -188,13 +199,7 @@ if algo in algorithms
             true_prod, forecasters_preds, scaler = market_data[q]
 
             D_exp = zeros(n_forecasters, n_forecasters)
-            alpha = Int.(rand(n_forecasters, T) .< missing_rate)
-            for t in 1:T
-                if sum(alpha[:, t]) == length(alpha[:, t])
-                    idx = rand(1:length(alpha[:, t]))
-                    alpha[idx, t] = 0
-                end
-            end
+            alpha = alphas[exp]
 
             for t in 2:T
                 forecasters_preds_t = [forecasters_preds[f][t] for f in model_names]
