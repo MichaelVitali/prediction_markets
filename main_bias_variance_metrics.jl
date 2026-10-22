@@ -6,6 +6,7 @@ using ProgressBars
 using Base.Threads
 using Plots.PlotMeasures
 using Random
+using Normalization
 
 include("functions/functions.jl")
 include("functions/metrics.jl")
@@ -28,9 +29,22 @@ n_forecasters = 3
 algorithms = ["RQR"]
 show_benchmarks = true
 lead_time = 1
+environment = "invariant"
 missing_rates = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90]
 #missing_rates = [0.05]
+lr = 0.1
+batch_percentage = 0.2
 seed = 1234
+
+# Data bounds for normalization (same fixed box as main_convergence.jl and main_rewards.jl)
+lower_bound = -3.0
+upper_bound = 5.0
+scaler = MinMax([Float64(lower_bound), Float64(upper_bound)])
+
+generators = Dict("invariant" => generate_time_invariant_data_multiple_lead_times,
+                  "abrupt" => generate_abrupt_data_multiple_lead_times,
+                  "variant" => generate_dynamic_data_sin_multiple_lead_times)
+haskey(generators, environment) || error("The defined environment is not yet implemented")
 
 if show_benchmarks
     push!(algorithms, "mean_impute")
@@ -50,7 +64,7 @@ for missing_rate in missing_rates
 
     # Set true_weights once from a single data draw (same for all experiments/missing rates)
     if true_weights === nothing
-        _, _, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, [q])
+        _, _, w = generators[environment](T, lead_time, [q])
         global true_weights = w'
     end
 
@@ -68,8 +82,10 @@ for missing_rate in missing_rates
 
         # Data generation (own seed: independent of threading)
         rng = Xoshiro(seed + i)
-        realizations, forecasts, w = generate_time_invariant_data_multiple_lead_times(T, lead_time, [q]; rng)
-        forecasters_preds = forecasts[q]
+        realizations, forecasts, w = generators[environment](T, lead_time, [q]; rng)
+        # Normalize to [0,1] with the shared MinMax scaler (clamp first to keep everything in range)
+        realizations = [scaler(clamp.(v, lower_bound, upper_bound)) for v in realizations]
+        forecasters_preds = Dict(f => [scaler(clamp.(v, lower_bound, upper_bound)) for v in preds] for (f, preds) in forecasts[q])
         sorted_f = sort(collect(forecasters_preds), by=first)
         sorted_forecasters = OrderedDict(sorted_f)
 
@@ -92,9 +108,9 @@ for missing_rate in missing_rates
 
             for algo in algorithms
                 if algo == "QR"
-                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, 0.01, 0.2)
+                    weights_history[algo][:, t], _ = online_quantile_regression_update_multiple_lead_times(forecasters_preds_t, weights_history[algo][:, t-1], y_true, q, lr, batch_percentage)
                 elseif algo == "RQR"
-                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, 0.01, 0.2)
+                    weights_history[algo][:, t], new_D, _ = online_adaptive_robust_quantile_regression_multiple_lead_times(forecasters_preds_t, y_true, weights_history[algo][:, t-1], D_exp, alpha[:, t], q, lr, batch_percentage)
                     D_exp = new_D
                 end
 
@@ -111,7 +127,7 @@ for missing_rate in missing_rates
 
             if "mean_impute" in algorithms
                 w0 = weights_history["mean_impute"][:, 1]
-                results_w, results_f = quantile_regression_mean_imputation_multiple_lead_times(forecasters_preds, realizations, w0, alpha, q)
+                results_w, results_f = quantile_regression_mean_imputation_multiple_lead_times(forecasters_preds, realizations, w0, alpha, q, lr, batch_percentage)
 
                 for f in 1:n_forecasters
                     exp_weights["mean_impute"][f][i, :] .= results_w[f, :]
@@ -119,7 +135,7 @@ for missing_rate in missing_rates
             end
             if "last_impute" in algorithms
                 w0 = weights_history["last_impute"][:, 1]
-                results_w, results_f = quantile_regression_last_impute_multiple_lead_times(forecasters_preds, realizations, w0, alpha, q)
+                results_w, results_f = quantile_regression_last_impute_multiple_lead_times(forecasters_preds, realizations, w0, alpha, q, lr, batch_percentage)
                 
                 for f in 1:n_forecasters
                     exp_weights["last_impute"][f][i, :] .= results_w[f, :]
@@ -217,7 +233,7 @@ for missing_rate in missing_rates
         xlabel="Session # [x10³]",
         xlabelfontsize=14)
     display(plot_biasses)
-    savefig(plot_biasses, "plots/metrics/plot_biasses_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
+    savefig(plot_biasses, "plots/metrics/plot_biasses_$(environment)_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
 
     ## Plot variances for all algorithms
     ylims_var = padded_ylims([variances_mc[algo][:, cut_start:end] for algo in algorithms]...)
@@ -254,7 +270,7 @@ for missing_rate in missing_rates
         xlabel="Session # [x10³]",
         xlabelfontsize=14)
     display(plot_variances)
-    savefig(plot_variances, "plots/metrics/plot_variances_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
+    savefig(plot_variances, "plots/metrics/plot_variances_$(environment)_$(lead_time)lt_q$(Int(q*100))_miss$(Int(missing_rate * 100)).pdf")
 end
 
 # Plot variance and biass for different missing rates
@@ -295,7 +311,7 @@ plot!(
     xlabelfontsize=14
 )
 display(plot_missingness_var)
-savefig(plot_missingness_var, "plots/metrics/plot_missingness_variances_$(lead_time)lt_q$(Int(q*100)).pdf")
+savefig(plot_missingness_var, "plots/metrics/plot_missingness_variances_$(environment)_$(lead_time)lt_q$(Int(q*100)).pdf")
 
 ylims_mbias = padded_ylims([miss_biass[mr][:, cut_start:end] for mr in missing_rates]...)
 plot_missingness_bias = plot(layout=(n_forecasters, 1), size=(1000, 900))
@@ -337,4 +353,4 @@ plot!(
     xlabelfontsize=16
 )
 display(plot_missingness_bias)
-savefig(plot_missingness_bias, "plots/metrics/plot_missingness_biasses_$(lead_time)lt_q$(Int(q*100)).pdf")
+savefig(plot_missingness_bias, "plots/metrics/plot_missingness_biasses_$(environment)_$(lead_time)lt_q$(Int(q*100)).pdf")
