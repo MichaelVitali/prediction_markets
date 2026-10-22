@@ -31,7 +31,7 @@ include("settings.jl")
 include("plot_utils.jl")
 n_experiments = 100
 #missing_rates = [0.05, 0.10, 0.25, 0.50, 0.75, 0.90]
-missing_rates = [0.2]
+missing_rates = [0.05]
 plot_missing_rate = 0.05    # missing rate whose RQR weights are plotted
 
 # Session losses [MW], keyed by (quantile, algorithm, missing_rate) => (n_runs, T) matrix
@@ -202,7 +202,7 @@ layout_updates = Dict{Symbol, Any}(
 
 last_xaxis_name = (n_rows == 1) ? "xaxis" : "xaxis$(n_rows)"
 layout_updates[Symbol("$(last_xaxis_name)_tickformat")] = "%b"
-layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Time [15min]", font=attr(size=18))
+layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Date", font=attr(size=18))
 layout_updates[Symbol("$(last_xaxis_name)_title_standoff")] = 20
 layout_updates[Symbol("$(last_xaxis_name)_tickfont")] = attr(size=16)
 layout_updates[:yaxis_tickfont]  = attr(size=16)
