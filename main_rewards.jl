@@ -14,12 +14,10 @@ include("functions/functions_payoff.jl")
 include("data_generation/DataGeneration.jl")
 include("online_algorithms/quantile_regression.jl")
 include("online_algorithms/adaptive_robust_quantile_regression.jl")
-include("payoff/shapley_values.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .DataGeneration
 using .QuantileRegression
-using .Shapley
 using .AdaptiveRobustRegression
 
 # Environment Settings
@@ -27,17 +25,18 @@ quantiles = [0.1, 0.5, 0.9]
 n_forecasters = 3
 algorithms = ["QR", "RQR"]
 total_reward = 100
-T = 10000
-n_experiments = 1
-lead_time = 24
+T = 20000
+n_experiments = 1000
+lead_time = 1
 delta = 0.7
 environment = "invariant"
 lr = 0.1   # shared learning rate for all algorithms (QR and RQR)
 batch_percentage = 0.2
 missing_rate = 0.05                        # RQR missing-submission rate
 seed = 1234
-payoff_halflife = 60                       # EMA half-life for payoff smoothing, in steps (days)
-lambda_payoff = 0.5^(1 / payoff_halflife)  # -> old payoffs lose half their weight every 60 steps
+n_lambda = 1000                              # effective window size of the long-term (in-sample) scores, in steps (days)
+lambda_score = 1 - 1 / n_lambda            # forgetting factor, n_lambda = (1 - lambda)^-1
+plot_start = 100                           # first session plotted/summarised (session 1 has no reward and the long-term scores start from 0)
 
 # Data bounds for normalization. Synthetic data is Gaussian (unbounded), so we impose a
 # fixed a-priori box covering the generating distributions (forecaster means ~0..2, sd ~1).
@@ -76,11 +75,13 @@ end
 
 # Environment Variables
 # Results averaged over the Monte-Carlo runs, keyed by (quantile, algorithm) => (n_forecasters, T)
-payoffs = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
+long_term_scores = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 rewards = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 weights = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 rewards_in_sample = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 rewards_out_sample = Dict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
+# Per-run mean total reward per session (summed over quantiles, sessions plot_start:T), keyed by algorithm => (n_forecasters, n_experiments)
+run_mean_rewards = Dict([algo => zeros(n_forecasters, n_experiments) for algo in algorithms])
 
 #################### Quantile Regression ####################
 algo = "QR"
@@ -97,7 +98,7 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
 
         # Experiment Variables
         weights_exp = zeros(n_forecasters, T)
-        payoffs_exp = zeros(n_forecasters, T)
+        long_term_scores_exp = zeros(n_forecasters, T)   # S_0 = 0: new sellers are not trusted a priori
         rewards_exp = zeros(n_forecasters, T)
         rewards_in_exp = zeros(n_forecasters, T)
         rewards_out_exp = zeros(n_forecasters, T)
@@ -112,15 +113,14 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
             aggregated_forecast_t = qr_aggregate(forecasters_preds_t, weights_exp[:, t-1])
             weights_exp[:, t] = qr_update(forecasters_preds_t, weights_exp[:, t-1], y_true, aggregated_forecast_t, q, lr, batch_percentage)
 
-            # Payoff calculation
-            temp_payoffs = shapley_payoff_multiple_lead_times_refit(forecasters_preds_t, weights_exp[:, t-1], y_true, q)
+            # Normalized quantile scores in [0,1] and their long-term EMA
             forecasters_losses = [mean(QuantileLoss(q).(forecasters_preds_t[i] .- y_true)) for i in 1:n_forecasters]
             temp_scores = 1 .- (forecasters_losses ./ loss_bound)
-            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
+            long_term_scores_exp[:, t] = payoff_update(long_term_scores_exp[:, t-1], temp_scores, lambda_score)
 
-            # In-sample: delta share of the budget; out-of-sample: leave-one-out wagering on the rest
+            # In-sample: equal-stake rule on the long-term scores (delta share of the budget); out-of-sample: on the session scores
             all_active = trues(n_forecasters)
-            rewards_in = in_sample_rewards(payoffs_exp[:, t], all_active, delta * quantile_step_reward)
+            rewards_in = in_sample_rewards(long_term_scores_exp[:, t], all_active, delta * quantile_step_reward)
             rewards_out = out_of_sample_rewards(temp_scores, all_active, (1 - delta) * quantile_step_reward)
 
             rewards_in_exp[:, t] = rewards_in
@@ -129,16 +129,17 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
         end
 
         lock(data_lock) do
-            payoffs[(q, algo)] .+= payoffs_exp
+            long_term_scores[(q, algo)] .+= long_term_scores_exp
             weights[(q, algo)] .+= weights_exp
             rewards[(q, algo)] .+= rewards_exp
             rewards_in_sample[(q, algo)] .+= rewards_in_exp
             rewards_out_sample[(q, algo)] .+= rewards_out_exp
+            run_mean_rewards[algo][:, exp] .+= vec(mean(rewards_exp[:, plot_start:T], dims=2))
         end
     end
 end
 
-for q in quantiles, results in (payoffs, weights, rewards, rewards_in_sample, rewards_out_sample)
+for q in quantiles, results in (long_term_scores, weights, rewards, rewards_in_sample, rewards_out_sample)
     results[(q, algo)] ./= n_experiments
 end
 
@@ -157,7 +158,7 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
 
         # Experiment Variables
         weights_exp = zeros(n_forecasters, T)
-        payoffs_exp = zeros(n_forecasters, T)
+        long_term_scores_exp = zeros(n_forecasters, T)   # S_0 = 0: new sellers are not trusted a priori
         rewards_exp = zeros(n_forecasters, T)
         rewards_in_exp = zeros(n_forecasters, T)
         rewards_out_exp = zeros(n_forecasters, T)
@@ -172,31 +173,22 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
             # Forecast combination (session closes), then update once y_true is observed
             aggregated_forecast_t = rqr_aggregate(forecasters_preds_t, weights_exp[:, t-1], D_exp, alpha[:, t])
             weights_exp[:, t], new_D = rqr_update(forecasters_preds_t, y_true, weights_exp[:, t-1], D_exp, alpha[:, t], aggregated_forecast_t, q, lr, batch_percentage)
-            prev_D = D_exp
             D_exp = new_D
 
-            # Payoff Calculation
+            # Normalized quantile scores of the available sellers (at least one, enforced when drawing alpha)
             temp_forecasts_t = [forecasters_preds_t[j] for j in 1:n_forecasters if alpha[j, t] == 0]
-            temp_weights_t = weights_exp[:, t-1] .+ prev_D * alpha[:, t]
-            temp_weights_t = [temp_weights_t[j] for j in 1:n_forecasters if alpha[j, t] == 0]
-            temp_weights_t = project_to_simplex(temp_weights_t)
-
-            # At least one forecaster is always available (enforced when drawing alpha)
-            temp_payoffs = shapley_payoff_multiple_lead_times_refit(temp_forecasts_t, temp_weights_t, y_true, q)
             forecasters_losses = [mean(QuantileLoss(q).(temp_forecasts_t[i] .- y_true)) for i in 1:length(temp_forecasts_t)]
             temp_scores = 1 .- (forecasters_losses ./ loss_bound)
 
-            if length(temp_payoffs) < n_forecasters
-                for j in findall(a -> a == 1, alpha[:, t])
-                    insert!(temp_payoffs, j, 0.0)
-                    insert!(temp_scores, j, 0.0)
-                end
+            # Missing sellers score 0, so their long-term score decays while they are inactive
+            for j in findall(a -> a == 1, alpha[:, t])
+                insert!(temp_scores, j, 0.0)
             end
-            payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
+            long_term_scores_exp[:, t] = payoff_update(long_term_scores_exp[:, t-1], temp_scores, lambda_score)
 
             # Reward calculation: only active sellers share the budget; missing ones get zero (zero-element property)
             active = alpha[:, t] .== 0
-            rewards_in = in_sample_rewards(payoffs_exp[:, t], active, delta * quantile_step_reward)
+            rewards_in = in_sample_rewards(long_term_scores_exp[:, t], active, delta * quantile_step_reward)
             rewards_out = out_of_sample_rewards(temp_scores, active, (1 - delta) * quantile_step_reward)
 
             rewards_in_exp[:, t] = rewards_in
@@ -205,16 +197,17 @@ Threads.@threads for exp in ProgressBar(1:n_experiments)
         end
 
         lock(acc_lock_rqr) do
-            payoffs[(q, algo)] .+= payoffs_exp
+            long_term_scores[(q, algo)] .+= long_term_scores_exp
             weights[(q, algo)] .+= weights_exp
             rewards[(q, algo)] .+= rewards_exp
             rewards_in_sample[(q, algo)] .+= rewards_in_exp
             rewards_out_sample[(q, algo)] .+= rewards_out_exp
+            run_mean_rewards[algo][:, exp] .+= vec(mean(rewards_exp[:, plot_start:T], dims=2))
         end
     end
 end
 
-for q in quantiles, results in (payoffs, weights, rewards, rewards_in_sample, rewards_out_sample)
+for q in quantiles, results in (long_term_scores, weights, rewards, rewards_in_sample, rewards_out_sample)
     results[(q, algo)] ./= n_experiments
 end
 
@@ -236,13 +229,17 @@ end
 my_tick_formatter(vals) = ["$(Int(round(val/1000)))" for val in vals]
 x = 1:5000:T
 
+# Plotted sessions: skip the first ones (plot_start set in the settings)
+ts = plot_start:T
+cum_rewards_forecasters = Dict([algo => cumsum(total_rewards_forecasters[algo], dims=2) for algo in algorithms])   # summed from session 1
+
 # Shared, data-driven y-limits so panels of each figure use identical y-ticks.
 # Instantaneous and cumulative rewards live on different scales, so they keep separate ranges.
-ylims_total = padded_ylims(values(total_rewards_forecasters)...)
-ylims_in    = padded_ylims(values(total_in_rewards_forecasters)...)
-ylims_out   = padded_ylims(values(total_out_rewards_forecasters)...)
-ylims_rq    = padded_ylims([rewards[(q, algo)] for q in quantiles for algo in algorithms]...)
-ylims_cum   = padded_ylims([cumsum(total_rewards_forecasters[algo], dims=2) for algo in algorithms]...)
+ylims_total = padded_ylims([total_rewards_forecasters[algo][:, ts] for algo in algorithms]...)
+ylims_in    = padded_ylims([total_in_rewards_forecasters[algo][:, ts] for algo in algorithms]...)
+ylims_out   = padded_ylims([total_out_rewards_forecasters[algo][:, ts] for algo in algorithms]...)
+ylims_rq    = padded_ylims([rewards[(q, algo)][:, ts] for q in quantiles for algo in algorithms]...)
+ylims_cum   = padded_ylims([cum_rewards_forecasters[algo][:, ts] for algo in algorithms]...)
 
 # Plot total rewards for each algorithm
 l = @layout [a{0.03w} [b; c]]
@@ -257,7 +254,7 @@ plot!(plot_rewards[1],
 )
 
 for (i, algo) in enumerate(algorithms)
-    plot!(plot_rewards[i+1], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_rewards[i+1], ts, total_rewards_forecasters[algo][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     ylabel="",
     ylims=ylims_total,
     legend=false,
@@ -287,11 +284,36 @@ plot!(
 display(plot_rewards)
 savefig(plot_rewards, "plots/rewards/plot_total_rewards_$(lead_time)lt_$environment.pdf")
 
+# Mean total reward per session minus the equal share U/N, split into its in-sample and out-of-sample parts.
+# Bars: Monte-Carlo means over sessions ts; error bars: ±1 std of the per-run mean across the experiments.
+equal_share = total_reward / n_forecasters
+excess_in  = Dict([algo => vec(mean(total_in_rewards_forecasters[algo][:, ts], dims=2)) .- delta * equal_share for algo in algorithms])
+excess_out = Dict([algo => vec(mean(total_out_rewards_forecasters[algo][:, ts], dims=2)) .- (1 - delta) * equal_share for algo in algorithms])
+excess_std = Dict([algo => vec(std(run_mean_rewards[algo], dims=2)) for algo in algorithms])
+algo_offsets = Dict("QR" => -0.2, "RQR" => 0.2)
+algo_colors = Dict("QR" => "#2a78d6", "RQR" => "#eb6834")
+ylims_excess = padded_ylims([0.0], [excess_in[algo] .+ excess_out[algo] .+ s .* excess_std[algo] for algo in algorithms for s in (-1, 1)]...; pad_frac=0.1)
+
+plot_excess_rewards = plot(size=(800, 500), ylims=ylims_excess, legend=:topleft, fg_legend=:transparent, bg_legend=:transparent,
+    ylabel="Excess reward per session [£]", xticks=(1:n_forecasters, ["Forecaster $i" for i in 1:n_forecasters]),
+    tickfontsize=12, ylabelfontsize=14, legendfontsize=11, left_margin=5mm, grid=:y)
+hline!(plot_excess_rewards, [0], color=:black, lw=1, label="")
+for algo in algorithms
+    xs = (1:n_forecasters) .+ algo_offsets[algo]
+    total_excess = excess_in[algo] .+ excess_out[algo]
+    bar!(plot_excess_rewards, xs, excess_in[algo], bar_width=0.38, color=algo_colors[algo], linecolor=:white, label="$algo in-sample")
+    bar!(plot_excess_rewards, xs, total_excess, fillrange=excess_in[algo], bar_width=0.38, color=algo_colors[algo], fillalpha=0.4,
+         linecolor=:white, label="$algo out-of-sample")
+    scatter!(plot_excess_rewards, xs, total_excess, yerror=excess_std[algo], markersize=0, color=:black, markerstrokecolor=:black, label="")
+end
+display(plot_excess_rewards)
+savefig(plot_excess_rewards, "plots/rewards/plot_excess_rewards_$(lead_time)lt_$environment.pdf")
+
 # Plot total in-sample and out-of-sample rewards
 subplot_letters = [('a' + i - 1) for i in 1:length(algorithms)]
 plot_in_out_rewards = plot(layout=(2, length(algorithms)), size=(1000, 700))
 for (i, algo) in enumerate(algorithms)
-    plot!(plot_in_out_rewards[1, i], 1:T, total_in_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_in_out_rewards[1, i], ts, total_in_rewards_forecasters[algo][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Session #", 
     ylims=ylims_in,
     ylabel="in-sample reward [£]",
@@ -307,7 +329,7 @@ for (i, algo) in enumerate(algorithms)
     rotation=15
     )
 
-    plot!(plot_in_out_rewards[2, i], 1:T, total_out_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_in_out_rewards[2, i], ts, total_out_rewards_forecasters[algo][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
     xlabel="Session #", 
     ylims=ylims_out,
     ylabel="out-of-sample reward [£]",
@@ -331,7 +353,7 @@ plot_reward_quantiles = plot(layout=(length(quantiles), length(algorithms)), siz
 for (i, algo) in enumerate(algorithms)
     for (j, q) in enumerate(quantiles)
         
-        plot!(plot_reward_quantiles[j, i], 1:T, rewards[(q, algo)]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+        plot!(plot_reward_quantiles[j, i], ts, rewards[(q, algo)][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Session #", 
         ylims=ylims_rq,
         ylabel="Total reward [£]",
@@ -362,7 +384,7 @@ savefig(plot_reward_quantiles, "plots/rewards/plot_total_rewards_quantiles_$(lea
 plot_insta_cum_reward = plot(layout=(2, length(algorithms)), size=(1000, 800)) 
 for (i, algo) in enumerate(algorithms)
 
-    plot!(plot_insta_cum_reward[1, i], 1:T, total_rewards_forecasters[algo]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_insta_cum_reward[1, i], ts, total_rewards_forecasters[algo][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Session #", 
         ylims=ylims_total,
         ylabel="Instantaneous reward [£]",
@@ -379,7 +401,7 @@ for (i, algo) in enumerate(algorithms)
         formatter=:plain
     )
     
-    plot!(plot_insta_cum_reward[2, i], 1:T, cumsum(total_rewards_forecasters[algo], dims=2)', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
+    plot!(plot_insta_cum_reward[2, i], ts, cum_rewards_forecasters[algo][:, ts]', labels=["Forecaster 1" "Forecaster 2" "Forecaster 3"], 
         xlabel="Session #", 
         ylims=ylims_cum,
         ylabel="Cumulative reward [£]",

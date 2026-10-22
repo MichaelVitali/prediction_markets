@@ -19,30 +19,29 @@ include("../functions/functions.jl")
 include("../functions/functions_payoff.jl")
 include("../online_algorithms/quantile_regression.jl")
 include("../online_algorithms/adaptive_robust_quantile_regression.jl")
-include("../payoff/shapley_values.jl")
 include("data_preprop.jl")
 using .UtilsFunctions
 using .UtilsFunctionsPayoff
 using .QuantileRegression
-using .Shapley
 using .AdaptiveRobustRegression
 using .RealWorldtestData
 
 # Environment Settings (shared ones in settings.jl)
 include("settings.jl")
 include("plot_utils.jl")
-n_experiments = 5
+n_experiments = 100
 total_reward = 100
 delta = 0.7
 algorithms = ["QR", "RQR"]
 missing_rate = 0.05         # RQR missing-submission rate
-lambda_payoff = 0.999       # EMA factor of the in-sample (Shapley) payoffs
+n_lambda = 90             # effective window size of the long-term (in-sample) scores, in sessions (days)
+lambda_score = 1 - 1 / n_lambda   # forgetting factor, n_lambda = (1 - lambda)^-1
 
 # Environment Variables
 realizations = OrderedDict([q => Vector{Vector{Float64}}() for q in quantiles])
 algo_forecasts = OrderedDict([q => OrderedDict([name => [] for name in model_names]) for q in quantiles])
 # Results averaged over the Monte-Carlo runs, keyed by (quantile, algorithm) => (n_forecasters, T), losses => (T,)
-payoffs = OrderedDict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
+long_term_scores = OrderedDict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 rewards = OrderedDict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 weights = OrderedDict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
 rewards_in_sample = OrderedDict([(q, algo) => zeros(n_forecasters, T) for q in quantiles for algo in algorithms])
@@ -51,7 +50,7 @@ losses = OrderedDict([(q, algo) => zeros(T) for q in quantiles for algo in algor
 
 # Wall-clock time [ns] of each market stage per session, keyed by (quantile, algorithm, stage) => (n_experiments, T)
 #   aggregation: forecast combination    update: weights (and D) update
-#   payoff: in-sample Shapley payoffs, out-of-sample scores and final reward allocation
+#   payoff: session scores, long-term scores and final reward allocation
 stages = ["aggregation", "update", "payoff"]
 timings = OrderedDict([(q, algo, s) => zeros(n_experiments, T) for q in quantiles for algo in algorithms for s in stages])
 
@@ -84,6 +83,10 @@ for q in quantiles
     end
 end
 
+# Warm-up: compile the reward functions before the timed loops. They are first called after the burn-in,
+# so otherwise their JIT compilation would fall inside a timed session (only session 2 is excluded).
+in_sample_rewards(zeros(n_forecasters), trues(n_forecasters), 1.0); out_of_sample_rewards(zeros(n_forecasters), trues(n_forecasters), 1.0)
+
 #################### Quantile Regression ####################
 algo = "QR"
 data_lock = ReentrantLock()
@@ -96,7 +99,7 @@ if algo in algorithms
         Threads.@threads for exp in ProgressBar(1:n_experiments)
             # Experiment Variables
             weights_exp = zeros(n_forecasters, T)
-            payoffs_exp = zeros(n_forecasters, T)
+            long_term_scores_exp = zeros(n_forecasters, T)   # S_0 = 0: new sellers are not trusted a priori
             rewards_exp = zeros(n_forecasters, T)
             rewards_in_exp = zeros(n_forecasters, T)
             rewards_out_exp = zeros(n_forecasters, T)
@@ -124,16 +127,16 @@ if algo in algorithms
                 loss_t = mean(quantile_loss.(y_true, aggregated_forecast_t, q))
                 losses_qr_exp[t] = loss_t
 
+                # Normalized quantile scores in [0,1] and their long-term EMA
                 t0 = time_ns()
-                temp_payoffs = shapley_payoff_multiple_lead_times_refit(forecasters_preds_t, weights_exp[:, t-1], y_true_sc, q)
                 forecasters_losses = [mean(quantile_loss.(y_true_sc, forecasters_preds_t[i], q)) for i in 1:n_forecasters]
                 temp_scores = 1 .- (forecasters_losses ./ loss_bound)
-                payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
+                long_term_scores_exp[:, t] = payoff_update(long_term_scores_exp[:, t-1], temp_scores, lambda_score)
 
                 if t > burn_in_period
-                    # In-sample: delta share of the budget; out-of-sample: leave-one-out wagering on the rest
+                    # In-sample: equal-stake rule on the long-term scores (delta share of the budget); out-of-sample: on the session scores
                     all_active = trues(n_forecasters)
-                    rewards_in = in_sample_rewards(payoffs_exp[:, t], all_active, delta * quantile_step_reward)
+                    rewards_in = in_sample_rewards(long_term_scores_exp[:, t], all_active, delta * quantile_step_reward)
                     rewards_out = out_of_sample_rewards(temp_scores, all_active, (1 - delta) * quantile_step_reward)
 
                     rewards_in_exp[:, t] = rewards_in
@@ -146,7 +149,7 @@ if algo in algorithms
                 for s in stages
                     timings[(q, algo, s)][exp, :] = timings_exp[s]
                 end
-                payoffs[(q, algo)] += payoffs_exp
+                long_term_scores[(q, algo)] += long_term_scores_exp
                 weights[(q, algo)] += weights_exp
                 rewards[(q, algo)] += rewards_exp
                 rewards_in_sample[(q, algo)] += rewards_in_exp
@@ -156,7 +159,7 @@ if algo in algorithms
         end
     end
 
-    for q in quantiles, results in (payoffs, weights, rewards, rewards_in_sample, rewards_out_sample, losses)
+    for q in quantiles, results in (long_term_scores, weights, rewards, rewards_in_sample, rewards_out_sample, losses)
         results[(q, algo)] ./= n_experiments
     end
 end
@@ -187,7 +190,7 @@ if algo in algorithms
         Threads.@threads for exp in ProgressBar(1:n_experiments)
             # Experiment Variables
             weights_exp = zeros(n_forecasters, T)
-            payoffs_exp = zeros(n_forecasters, T)
+            long_term_scores_exp = zeros(n_forecasters, T)   # S_0 = 0: new sellers are not trusted a priori
             rewards_exp = zeros(n_forecasters, T)
             rewards_in_exp = zeros(n_forecasters, T)
             rewards_out_exp = zeros(n_forecasters, T)
@@ -213,38 +216,29 @@ if algo in algorithms
                 t0 = time_ns()
                 weights_exp[:, t], new_D = rqr_update(forecasters_preds_t, y_true_sc, weights_exp[:, t-1], D_exp, alpha[:, t], aggregated_forecast_t, q, lr, batch_percentage)
                 timings_exp["update"][t] = time_ns() - t0
-                prev_D = D_exp
                 D_exp = new_D
                 aggregated_forecast_t = denormalize(aggregated_forecast_t, scaler)
                 # Loss calculation
                 loss_t = mean(quantile_loss.(y_true, aggregated_forecast_t, q))
                 losses_rqr_exp[t] = loss_t
 
-                # Payoff Calculation
+                # Normalized quantile scores of the available sellers (at least one, enforced when drawing alpha)
                 t0 = time_ns()
                 temp_forecasts_t = [forecasters_preds_t[j] for j in 1:n_forecasters if alpha[j, t] == 0]
-                temp_weights_t = weights_exp[:, t-1] .+ prev_D * alpha[:, t]
-                temp_weights_t = [temp_weights_t[j] for j in 1:n_forecasters if alpha[j, t] == 0]
-                temp_weights_t = project_to_simplex(temp_weights_t)
-
-                # At least one forecaster is always available (enforced when drawing alpha)
-                temp_payoffs = shapley_payoff_multiple_lead_times_refit(temp_forecasts_t, temp_weights_t, y_true_sc, q)
                 forecasters_losses = [mean(quantile_loss.(y_true_sc, temp_forecasts_t[i], q)) for i in 1:length(temp_forecasts_t)]
                 temp_scores = 1 .- (forecasters_losses ./ loss_bound)
 
-                if length(temp_payoffs) < n_forecasters
-                    for j in findall(a -> a == 1, alpha[:, t])
-                        insert!(temp_payoffs, j, 0.0)
-                        insert!(temp_scores, j, 0.0)
-                    end
+                # Missing sellers score 0, so their long-term score decays while they are inactive
+                for j in findall(a -> a == 1, alpha[:, t])
+                    insert!(temp_scores, j, 0.0)
                 end
-                payoffs_exp[:, t] = payoff_update(payoffs_exp[:, t-1], temp_payoffs, lambda_payoff)
+                long_term_scores_exp[:, t] = payoff_update(long_term_scores_exp[:, t-1], temp_scores, lambda_score)
 
                 # Reward calculation
                 if t > burn_in_period
                     # Only active sellers share the budget; missing ones get zero (zero-element property)
                     active = alpha[:, t] .== 0
-                    rewards_in = in_sample_rewards(payoffs_exp[:, t], active, delta * quantile_step_reward)
+                    rewards_in = in_sample_rewards(long_term_scores_exp[:, t], active, delta * quantile_step_reward)
                     rewards_out = out_of_sample_rewards(temp_scores, active, (1 - delta) * quantile_step_reward)
 
                     rewards_in_exp[:, t] = rewards_in
@@ -258,7 +252,7 @@ if algo in algorithms
                 for s in stages
                     timings[(q, algo, s)][exp, :] = timings_exp[s]
                 end
-                payoffs[(q, algo)] += payoffs_exp
+                long_term_scores[(q, algo)] += long_term_scores_exp
                 weights[(q, algo)] += weights_exp
                 rewards[(q, algo)] += rewards_exp
                 rewards_in_sample[(q, algo)] += rewards_in_exp
@@ -268,32 +262,33 @@ if algo in algorithms
         end
     end
 
-    for q in quantiles, results in (payoffs, weights, rewards, rewards_in_sample, rewards_out_sample, losses)
+    for q in quantiles, results in (long_term_scores, weights, rewards, rewards_in_sample, rewards_out_sample, losses)
         results[(q, algo)] ./= n_experiments
     end
 end
 #################### Wall-clock timings ####################
 # Session 2 is excluded everywhere: it is the first timed call of every experiment and includes JIT compilation.
-# Per-session stats [us] over the sessions with rewards; per-experiment totals [s] over sessions 3:T.
-function timing_stats(M, session_range, total_range)
+# Per-session stats [us] and per-experiment totals [s] over the same sessions 3:T, so mean_us * length(3:T) = mean_total_s.
+timed_sessions = 3:T
+function timing_stats(M, session_range)
     per_session = vec(M[:, session_range]) ./ 1e3
-    totals = vec(sum(M[:, total_range], dims=2)) ./ 1e9
-    return median(per_session), quantile(per_session, 0.95), mean(totals), length(totals) > 1 ? std(totals) : 0.0
+    totals = vec(sum(M[:, session_range], dims=2)) ./ 1e9
+    return mean(per_session), median(per_session), quantile(per_session, 0.95), mean(totals), length(totals) > 1 ? std(totals) : 0.0
 end
 
-timing_summary = DataFrame(quantile=String[], algorithm=String[], stage=String[], median_us=Float64[], p95_us=Float64[], mean_total_s=Float64[], std_total_s=Float64[])
+timing_summary = DataFrame(quantile=String[], algorithm=String[], stage=String[], mean_us=Float64[], median_us=Float64[], p95_us=Float64[], mean_total_s=Float64[], std_total_s=Float64[])
 for algo in algorithms, s in stages
     for q in quantiles
-        push!(timing_summary, (string(q), algo, s, timing_stats(timings[(q, algo, s)], (burn_in_period+1):T, 3:T)...))
+        push!(timing_summary, (string(q), algo, s, timing_stats(timings[(q, algo, s)], timed_sessions)...))
     end
     # Full session: all quantiles together
-    push!(timing_summary, ("all", algo, s, timing_stats(sum(timings[(q, algo, s)] for q in quantiles), (burn_in_period+1):T, 3:T)...))
+    push!(timing_summary, ("all", algo, s, timing_stats(sum(timings[(q, algo, s)] for q in quantiles), timed_sessions)...))
 end
 CSV.write(joinpath(results_dir, "timings_summary.csv"), timing_summary)
 
 println("\n############ WALL-CLOCK TIMINGS ############")
 println("Julia $(VERSION), $(Threads.nthreads()) thread(s), CPU: $(Sys.cpu_info()[1].model), $n_experiments experiment(s)")
-show(transform(timing_summary, [:median_us, :p95_us, :mean_total_s, :std_total_s] .=> (c -> round.(c, sigdigits=4)), renamecols=false), allrows=true, allcols=true)
+show(transform(timing_summary, [:mean_us, :median_us, :p95_us, :mean_total_s, :std_total_s] .=> (c -> round.(c, sigdigits=4)), renamecols=false), allrows=true, allcols=true)
 println()
 
     #################### Calculate Errors ####################
@@ -421,7 +416,7 @@ function make_loss_plot(avg_ts_qr, avg_ts_rqr, global_loss_models, model_name, w
         xaxis_tickfont = attr(size=16),
         yaxis_tickfont = attr(size=16),
         yaxis2_tickfont = attr(size=16),
-        xaxis2_title = attr(text="Time [15min]", font=attr(size=18)),
+        xaxis2_title = attr(text="Date", font=attr(size=18)),
         hovermode = "x unified",
         legend = attr(
             orientation = "h",
@@ -530,7 +525,7 @@ layout_updates = Dict{Symbol, Any}(
 # Set X-axis label on the very last subplot
 last_xaxis_name = (n_rows == 1) ? "xaxis" : "xaxis$(n_rows)"
 layout_updates[Symbol("$(last_xaxis_name)_tickformat")] = "%b"
-layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Time [15min]", font=attr(size=18))
+layout_updates[Symbol("$(last_xaxis_name)_title")] = attr(text="Date", font=attr(size=18))
 layout_updates[Symbol("$(last_xaxis_name)_title_standoff")] = 20
 layout_updates[Symbol("$(last_xaxis_name)_tickfont")] = attr(size=16)
 layout_updates[:yaxis_tickfont]  = attr(size=16)
@@ -636,7 +631,7 @@ function make_reward_plot(model_rewards, window, dates, y_range)
         xaxis_tickfont = attr(size=16),
         yaxis_tickfont = attr(size=16),
         yaxis2_tickfont = attr(size=16),
-        xaxis2_title = attr(text="Time [15min]", font=attr(size=18)),
+        xaxis2_title = attr(text="Date", font=attr(size=18)),
         hovermode = "x unified",
         legend = attr(
             orientation = "h",
@@ -679,6 +674,47 @@ savefig(p_reward_qr,  joinpath(plot_dir, "reward_analysis_qr.pdf"))
 savefig(p_reward_rqr, joinpath(plot_dir, "reward_analysis_rqr.pdf"))
 display(p_reward_qr)
 display(p_reward_rqr)
+
+# Distribution of the per-session total reward of each seller (after the burn-in), one figure per method
+function make_reward_boxplot(model_rewards, y_range)
+    p = PlotlyJS.plot()
+    for name in model_names
+        color = get(model_colors_dict, name, "gray")
+        add_trace!(p, box(
+            y = model_rewards[name],
+            name = uppercase(name),
+            marker = attr(color=color, size=3),
+            line = attr(color=color, width=1.5),
+            boxpoints = "outliers",
+            showlegend = false
+        ))
+    end
+    # Equal share of the budget among the sellers
+    add_hline!(p, total_reward / n_forecasters, line = attr(color="gray", width=1, dash="dash"))
+
+    relayout!(p,
+        height = 700,
+        width  = 1000,
+        paper_bgcolor = "white",
+        plot_bgcolor = "white",
+        yaxis_gridcolor = "lightgray", yaxis_linecolor = "black",
+        xaxis_linecolor = "black",
+        yaxis_range = y_range,
+        xaxis_tickfont = attr(size=14),
+        yaxis_tickfont = attr(size=16),
+        yaxis_title = attr(text="Reward per session [£]", font=attr(size=18)),
+        margin = attr(l=80, r=10, t=20, b=40)
+    )
+    return p
+end
+
+# Same y-range as the reward time series, so the QR and RQR figures are directly comparable
+p_reward_box_qr  = make_reward_boxplot(model_rewards_qr,  ylims_reward)
+p_reward_box_rqr = make_reward_boxplot(model_rewards_rqr, ylims_reward)
+savefig(p_reward_box_qr,  joinpath(plot_dir, "reward_boxplot_qr.pdf"))
+savefig(p_reward_box_rqr, joinpath(plot_dir, "reward_boxplot_rqr.pdf"))
+display(p_reward_box_qr)
+display(p_reward_box_rqr)
 
 #################### Print Monthly Rewards ####################
 println("\n############ MONTHLY REWARDS (Excluding Burn-in) ############")

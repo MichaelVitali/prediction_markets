@@ -5,6 +5,7 @@ using Combinatorics
 
 export payoff_update, get_subsets, get_subsets_excluding_players, mean_squared_error, in_sample_rewards, out_of_sample_rewards
 
+    # Exponentially weighted average, also used for the long-term scores S_t = lambda * S_{t-1} + (1 - lambda) * sc_t
     function payoff_update(prev_payoffs, new_payoffs, lambda)
 
         payoffs = lambda .* prev_payoffs .+ (1-lambda) .* new_payoffs
@@ -31,22 +32,14 @@ export payoff_update, get_subsets, get_subsets_excluding_players, mean_squared_e
     end
 
     """
-        in_sample_rewards(payoffs, active, budget)
+        in_sample_rewards(long_term_scores, active, budget)
 
-    Split `budget` among the active sellers (`active[i] == true`) proportionally to the positive part of
-    their (smoothed) payoffs. If no active seller has a positive payoff, the budget is split uniformly
-    among them. Missing sellers get zero (zero-element property).
+    Equal-stake competitive scoring rule (Lambert et al., Lemma 4) applied to the long-term scores
+    (EMA of the normalized quantile scores, in [0, 1]): seller i gets `(budget / N) * (1 + S_i - mean_{j != i} S_j)`
+    over the N active sellers. Same rule as `out_of_sample_rewards`, so it is budget-balanced and non-negative;
+    a single active seller gets the whole budget and missing sellers get zero.
     """
-    function in_sample_rewards(payoffs, active, budget)
-        rewards = zeros(length(payoffs))
-        positive = max.(0, payoffs[active])
-        if sum(positive) > 0
-            rewards[active] = budget .* (positive ./ sum(positive))
-        else
-            rewards[active] .= budget / count(active)
-        end
-        return rewards
-    end
+    in_sample_rewards(long_term_scores, active, budget) = out_of_sample_rewards(long_term_scores, active, budget)
 
     """
         out_of_sample_rewards(scores, active, budget)
